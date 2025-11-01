@@ -1,0 +1,68 @@
+---
+title: "Assignment1"
+output: pdf_document
+date: "2025-10-31"
+---
+
+## Exercise 1.Stock prices and returns
+# a
+```{r exercise1a, echo = True}
+
+library(readxl)
+library(tidyquant)
+library(ggplot2)
+library(dplyr)
+
+setwd("~/Downloads/EF_A1")
+
+HSBC_data <- tq_get("HSBC", get = "stock.price", from = "2010-11-01", to = "2020-11-01")
+
+ggplot(HSBC_data, aes(x = date, y = adjusted)) + geom_line(color = "navy") + geom_smooth(color = "orange", se = FALSE) + labs(
+  title = "HSBC Adjusted Stock Prices with Trend (2010 - 2020)",
+  x = "Date",
+  y = "Adjusted Closing Price"
+) +
+  theme_minimal()
+
+log_returns <- log(HSBC_data$adjusted /lag(HSBC_data$adjusted))
+
+ggplot(HSBC_data, aes(x = date, y = log_returns)) + geom_line(color = "navy", na.rm = TRUE) + labs(title = "HSBC Daily Log Returns(2010 - 2020)", x = "Date", y = "Log Return")
+```
+# b
+```{r exercise1b, echo = True}
+
+library(knitr)
+
+HSBC_data <- HSBC_data %>%
+  mutate(log_returns = log(adjusted / lag(adjusted)))
+
+mean_price = mean(HSBC_data$adjusted)
+sd_price = sd(HSBC_data$adjusted)
+min_price = min(HSBC_data$adjusted)
+max_price = max(HSBC_data$adjusted)
+
+mean_return <- mean(HSBC_data$log_returns, na.rm = TRUE)
+sd_return <- sd(HSBC_data$log_returns, na.rm = TRUE)
+min_return <- min(HSBC_data$log_returns, na.rm = TRUE)
+max_return <- max(HSBC_data$log_returns, na.rm = TRUE)
+skew_return <- skewness(HSBC_data$log_returns, na.rm = TRUE)
+kurt_return <- kurtosis(HSBC_data$log_returns, na.rm = TRUE)
+
+summary_table <- data.frame(
+  Statistic = c("Mean", "Voltality(SD)", "Min_price", "Max_price", "Skewness", "Kurtosis"),
+  AdjustedPrice = c(mean_price, sd_price, min_price, max_price, NA, NA),
+  LogReturn = c(mean_return, sd_return, min_return, max_return, skew_return, kurt_return)
+)
+
+kable(summary_table, caption = "Sumary Statistics for HSBC Adjusted Price and Log Returns")
+```
+From the table we observe that the HSBC's adjusted prices fluctuated between roughly \$13.50 and \$35.79 during 2010-2020, with an average around \$25, suggesting moderate long-term volatility(4.36).
+The daily log returns show a slightly negative mean and moderate volatility. The negative skewness(-0.55) and high kurtosis(5.8) indicate that the return distribution is left-skewness and leptokurtic -- implying more large drops than large gains, and extreme movements are more common than in a normal distribution.
+
+
+## Exercise 2 Return distributions
+# a
+```{r exercise2a, echo = True}
+
+
+```
