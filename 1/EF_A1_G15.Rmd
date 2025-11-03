@@ -39,26 +39,18 @@ library(ggplot2)
 prices_df <- data.frame(date = date, adjustedPrice = adjustedPrice)
 returns_df <- data.frame(date = date[2:length(date)], simpleReturns = simpleReturns, compoundedReturns = compoundedReturns)
 
-plot(date, adjustedPrice, type = 'l', 
-     main = paste('Adjusted Close Price of', nameOfStock),
-     xlab = 'Year', ylab = 'Adjusted Close Price',
-     col = 'blue', lwd = 1)
 ggplot(prices_df, aes(x = date, y = adjustedPrice)) +
-  geom_line(color = "blue", linewidth = 1) +
+  geom_line(color = 'navy', linewidth = 1) +
+  geom_smooth(color = 'orange', se = FALSE) +
   labs(
-    title = paste("Adjusted Close Price of", nameOfStock),
-    x = "Year",
-    y = "Adjusted Close Price"
-  ) +
+    title = paste(nameOfStock, 'Adjusted Stock Prices with Trend (2010 - 2020)'),
+    x = 'Year',
+    y = 'Adjusted Close Price') +
   theme_minimal()
 ggsave('figures/prices_plot.png', dpi = 300)
 
-plot(date[2:length(date)], simpleReturns, type = 'l', 
-     main = paste('Simple Returns of', nameOfStock),
-     xlab = 'Year', ylab = 'Simple Returns',
-     col = 'blue', lwd = 1)
 ggplot(returns_df, aes(x = date, y = simpleReturns)) +
-  geom_line(color = "blue", linewidth = 1) +
+  geom_line(color = 'navy', linewidth = 1) +
   labs(
     title = paste('Simple Returns of', nameOfStock),
     x = 'Year',
@@ -66,17 +58,12 @@ ggplot(returns_df, aes(x = date, y = simpleReturns)) +
   ) +
   theme_minimal()
 
-plot(date[2:length(date)], compoundedReturns, type = 'l', 
-     main = paste('Log Returns of', nameOfStock),
-     xlab = 'Year', ylab = 'Log Returns',
-     col = 'blue', lwd = 1)
 ggplot(returns_df, aes(x = date, y = compoundedReturns)) +
-  geom_line(color = "blue", linewidth = 1) +
+  geom_line(color = 'navy', na.rm = TRUE, linewidth = 1) +
   labs(
-    title = paste('Log Returns of', nameOfStock),
+    title = paste(nameOfStock, 'Daily Log Returns(2010 - 2020)'),
     x = 'Year',
-    y = 'Log Returns'
-  ) +
+    y = 'Log Returns') +
   theme_minimal()
 ggsave('figures/returns_plot.png', dpi = 300)
 ```
@@ -91,10 +78,12 @@ price_maximum <- max(adjustedPrice)
 price_median <- median(adjustedPrice)
 price_10_percentile <- quantile(adjustedPrice, 0.1)
 price_90_percentile <- quantile(adjustedPrice, 0.9)
+price_skewness <- skewness(adjustedPrice)
+price_kurtosis <- kurtosis(adjustedPrice)
 
 price_summaryStatistics <- data.frame(
-  Statistics = c("Mean", "Std. Deviation", "Minimum", "P10", "Median", "P90", "Maximum"),
-  Values = round(c(price_mean, price_stdev, price_minimum, price_10_percentile, price_median, price_90_percentile, price_maximum), 6)
+  Statistics = c("Mean", "Std. Deviation", "Minimum", "P10", "Median", "P90", "Maximum",'Skewness', 'Kurtosis'),
+  Values = round(c(price_mean, price_stdev, price_minimum, price_10_percentile, price_median, price_90_percentile, price_maximum, price_skewness, price_kurtosis), 6)
 )
 
 price_summaryStatistics
@@ -106,10 +95,12 @@ logReturns_maximum <- max(compoundedReturns)
 logReturns_median <- median(compoundedReturns)
 logReturns_10_percentile <- quantile(compoundedReturns, 0.1)
 logReturns_90_percentile <- quantile(compoundedReturns, 0.9)
+logReturns_skewness <- skewness(compoundedReturns)
+logReturns_kurtosis <- kurtosis(compoundedReturns)
 
 logReturns_summaryStatistics <- data.frame(
-  Statistics = c("Mean", "Std. Deviation", "Minimum", "P10", "Median", "P90", "Maximum"),
-  Values = round(c(logReturns_mean, logReturns_stdev, logReturns_minimum, logReturns_10_percentile, logReturns_median, logReturns_90_percentile, logReturns_maximum), 6)
+  Statistics = c("Mean", "Std. Deviation", "Minimum", "P10", "Median", "P90", "Maximum", 'Skewness', 'Kurtosis'),
+  Values = round(c(logReturns_mean, logReturns_stdev, logReturns_minimum, logReturns_10_percentile, logReturns_median, logReturns_90_percentile, logReturns_maximum, logReturns_skewness, logReturns_kurtosis), 6)
 )
 
 logReturns_summaryStatistics
@@ -123,14 +114,24 @@ single_logReturns_df <- data.frame(compoundedReturns = compoundedReturns)
 
 ggplot(single_logReturns_df, aes(x = compoundedReturns)) +
   geom_histogram(aes(y = ..density..), 
-                 bins = 50, fill = "blue", color = "white") +
+                 bins = 50, fill = 'skyblue', color = "white") +
+  geom_density(aes(color = 'Empirical distribution'), size = 1) +
   stat_function(fun = dnorm,
                 args = list(mean = mean(single_logReturns_df$compoundedReturns, na.rm = TRUE),
                             sd = sd(single_logReturns_df$compoundedReturns, na.rm = TRUE)),
-                color = "red", linewidth = 1.2) +
-  labs(title = "Distribution of Log Returns",
+                aes(color = "Normal distribution"),
+                linewidth = 1.5, linetype = "dashed") +
+  scale_color_manual(
+    name = "Distributions",
+    values = c("Empirical distribution" = "navy",
+               "Normal distribution"   = "orange")) +
+  labs(title = 'Distribution of HSBC Daily Log Returns',
        x = "Log Returns", y = "Density") +
-  theme_minimal()
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 10))
 ggsave('figures/returns_distribution.png', dpi = 300)
 ```
 
