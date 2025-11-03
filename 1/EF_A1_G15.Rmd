@@ -17,28 +17,25 @@ nameOfStock <- raw$Stock.Name[groupNumber]
 startDate <- raw$Start.Date[groupNumber]
 endDate <- raw$`End.Date.(+10y)`[groupNumber]
 
+# Extract the daily stock price from source
 library(quantmod)
 getSymbols(nameOfStock, src = 'yahoo', from = startDate, to = endDate)
 date <- index(HSBC)
-adjustedPrice <- as.numeric(HSBC[,'HSBC.Adjusted'])
 
-# Simple Returns
-differencePrice <- diff(adjustedPrice)
-simpleReturns <- numeric(length(adjustedPrice) - 1)
-for(i in (1:length(adjustedPrice)-1)){
-  simpleReturns[i] <- differencePrice[i] / adjustedPrice[i] * 100
-}
+# Adjusted Close
+adjustedPrice <- as.numeric(HSBC[,'HSBC.Adjusted'])
 
 # Log Returns
 compoundedReturns <- numeric(length(adjustedPrice) - 1)
 for(i in (2:length(adjustedPrice))){
-  compoundedReturns[i-1] <- adjustedPrice[i] / adjustedPrice[i-1]
+  compoundedReturns[i-1] <- log(adjustedPrice[i] / adjustedPrice[i-1])
 }
 
 library(ggplot2)
 prices_df <- data.frame(date = date, adjustedPrice = adjustedPrice)
-returns_df <- data.frame(date = date[2:length(date)], simpleReturns = simpleReturns, compoundedReturns = compoundedReturns)
+returns_df <- data.frame(date = date[2:length(date)], compoundedReturns = compoundedReturns)
 
+# Plot of daily stock price
 ggplot(prices_df, aes(x = date, y = adjustedPrice)) +
   geom_line(color = 'navy', linewidth = 1) +
   geom_smooth(color = 'orange', se = FALSE) +
@@ -49,15 +46,7 @@ ggplot(prices_df, aes(x = date, y = adjustedPrice)) +
   theme_minimal()
 ggsave('figures/prices_plot.png', dpi = 300)
 
-ggplot(returns_df, aes(x = date, y = simpleReturns)) +
-  geom_line(color = 'navy', linewidth = 1) +
-  labs(
-    title = paste('Simple Returns of', nameOfStock),
-    x = 'Year',
-    y = 'Simple Returns'
-  ) +
-  theme_minimal()
-
+# Plot of daily log returns
 ggplot(returns_df, aes(x = date, y = compoundedReturns)) +
   geom_line(color = 'navy', na.rm = TRUE, linewidth = 1) +
   labs(
@@ -70,7 +59,8 @@ ggsave('figures/returns_plot.png', dpi = 300)
 
 ## b.
 ```{r echo=TRUE,fig.dim=c(5,4),fig.align='center'}
-
+# Compute some relevant summary statistics of Adjusted Close
+library(moments)
 price_mean <- mean(adjustedPrice)
 price_stdev <- sd(adjustedPrice)
 price_minimum <- min(adjustedPrice)
@@ -82,12 +72,12 @@ price_skewness <- skewness(adjustedPrice)
 price_kurtosis <- kurtosis(adjustedPrice)
 
 price_summaryStatistics <- data.frame(
-  Statistics = c("Mean", "Std. Deviation", "Minimum", "P10", "Median", "P90", "Maximum",'Skewness', 'Kurtosis'),
-  Values = round(c(price_mean, price_stdev, price_minimum, price_10_percentile, price_median, price_90_percentile, price_maximum, price_skewness, price_kurtosis), 6)
-)
+  Statistics = c('Mean', 'Std. Deviation', 'Minimum', 'P10', 'Median', 'P90', 'Maximum','Skewness', 'Kurtosis'),
+  Values = round(c(price_mean, price_stdev, price_minimum, price_10_percentile, price_median, price_90_percentile, price_maximum, price_skewness, price_kurtosis), 6))
 
 price_summaryStatistics
 
+# Compute some relevant summary statistics of Log Returns
 logReturns_mean <- mean(compoundedReturns)
 logReturns_stdev <- sd(compoundedReturns)
 logReturns_minimum <- min(compoundedReturns)
@@ -99,9 +89,8 @@ logReturns_skewness <- skewness(compoundedReturns)
 logReturns_kurtosis <- kurtosis(compoundedReturns)
 
 logReturns_summaryStatistics <- data.frame(
-  Statistics = c("Mean", "Std. Deviation", "Minimum", "P10", "Median", "P90", "Maximum", 'Skewness', 'Kurtosis'),
-  Values = round(c(logReturns_mean, logReturns_stdev, logReturns_minimum, logReturns_10_percentile, logReturns_median, logReturns_90_percentile, logReturns_maximum, logReturns_skewness, logReturns_kurtosis), 6)
-)
+  Statistics = c('Mean', 'Std. Deviation', 'Minimum', 'P10', 'Median', 'P90', 'Maximum', 'Skewness', 'Kurtosis'),
+  Values = round(c(logReturns_mean, logReturns_stdev, logReturns_minimum, logReturns_10_percentile, logReturns_median, logReturns_90_percentile, logReturns_maximum, logReturns_skewness, logReturns_kurtosis), 6))
 
 logReturns_summaryStatistics
 ```
@@ -112,36 +101,38 @@ logReturns_summaryStatistics
 ```{r echo=TRUE, fig.dim=c(5,4),fig.align='center'}
 single_logReturns_df <- data.frame(compoundedReturns = compoundedReturns)
 
+# Distribution Plot of daily log returns with equivalent normal distribution curve
 ggplot(single_logReturns_df, aes(x = compoundedReturns)) +
   geom_histogram(aes(y = ..density..), 
-                 bins = 50, fill = 'skyblue', color = "white") +
+                 bins = 50, fill = 'skyblue', color = 'white') +
   geom_density(aes(color = 'Empirical distribution'), size = 1) +
   stat_function(fun = dnorm,
                 args = list(mean = mean(single_logReturns_df$compoundedReturns, na.rm = TRUE),
                             sd = sd(single_logReturns_df$compoundedReturns, na.rm = TRUE)),
-                aes(color = "Normal distribution"),
-                linewidth = 1.5, linetype = "dashed") +
+                aes(color = 'Normal distribution'),
+                linewidth = 1.5, linetype = 'dashed') +
   scale_color_manual(
-    name = "Distributions",
-    values = c("Empirical distribution" = "navy",
-               "Normal distribution"   = "orange")) +
+    name = 'Distributions',
+    values = c('Empirical distribution' = 'navy',
+               'Normal distribution'   = 'orange')) +
   labs(title = 'Distribution of HSBC Daily Log Returns',
-       x = "Log Returns", y = "Density") +
+       x = 'Log Returns', y = 'Density') +
   theme_minimal() +
   theme(
-    legend.position = "bottom",
-    legend.title = element_text(size = 12, face = "bold"),
+    legend.position = 'bottom',
+    legend.title = element_text(size = 12, face = 'bold'),
     legend.text = element_text(size = 10))
 ggsave('figures/returns_distribution.png', dpi = 300)
 ```
 
 ## b.
 ```{r echo=TRUE, fig.dim=c(12,8)}
+# Perform Jarque-Bera normality test
 library(tseries)
-
 jb_test <- jarque.bera.test(compoundedReturns)
 jb_test
 
+# Show the results of the JB test
 jbTest_summaryStatistics <- data.frame(
   JB_Test_Statistic = round(jb_test$statistic, 2),
   Critical_Value = round(qchisq(0.95, 2), 2),
@@ -150,6 +141,7 @@ jbTest_summaryStatistics <- data.frame(
 
 jbTest_summaryStatistics
 
+# QQ Plot of daily log returns
 ggplot(single_logReturns_df, aes(sample = compoundedReturns)) +
   stat_qq(shape = 1, color = 'blue', size = 1) +
   stat_qq_line(color = 'red', linewidth = 1) +
