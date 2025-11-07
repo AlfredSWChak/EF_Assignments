@@ -1,5 +1,5 @@
 ---
-title: "EF Group Submission Assignment 1"
+title: "EF Group Submission Assignment 2"
 subtitle: "Group 15" 
 author: "Lanlan Hou (2801069), Rick van der Ploeg (2782774), Sebastiaan van Dijen (2769505) and Alfred Sou (2796840)"
 output: pdf_document
