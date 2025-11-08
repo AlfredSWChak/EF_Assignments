@@ -121,54 +121,75 @@ returns_LBTest
 
 ## a.
 ```{r echo=TRUE, fig.dim=c(5,4),fig.align='center'}
-single_logReturns_df <- data.frame(compoundedReturns = compoundedReturns)
 
-# Distribution Plot of daily log returns with equivalent normal distribution curve
-ggplot(single_logReturns_df, aes(x = compoundedReturns)) +
-  geom_histogram(aes(y = ..density..), 
-                 bins = 50, fill = 'skyblue', color = 'white') +
-  geom_density(aes(color = 'Empirical distribution'), size = 1) +
-  stat_function(fun = dnorm,
-                args = list(mean = mean(single_logReturns_df$compoundedReturns, na.rm = TRUE),
-                            sd = sd(single_logReturns_df$compoundedReturns, na.rm = TRUE)),
-                aes(color = 'Normal distribution'),
-                linewidth = 1.5, linetype = 'dashed') +
-  scale_color_manual(
-    name = 'Distributions',
-    values = c('Empirical distribution' = 'navy',
-               'Normal distribution'   = 'orange')) +
-  labs(title = 'Distribution of HSBC Daily Log Returns',
-       x = 'Log Returns', y = 'Density') +
-  theme_minimal() +
-  theme(
-    legend.position = 'bottom',
-    legend.title = element_text(size = 12, face = 'bold'),
-    legend.text = element_text(size = 10))
-ggsave('figures/returns_distribution.png', dpi = 300)
+library(tidyquant)
+library(dplyr)
+library(ggplot2)
+library(forecast)
+library(zoo)
+
+setwd("~/Downloads/EF_A2")
+
+# windows
+W <- 21
+
+# getting data
+HSBC_data <- tq_get("HSBC", get = "stock.prices", from = "2016-11-01", to = "2020-11-01")
+
+
+# log returns
+HSBC_data <- HSBC_data %>%
+  mutate(log_return = log(adjusted / lag(adjusted))) %>%
+  filter(!is.na(log_return))
+
+# MA volatility
+HSBC_data <- HSBC_data %>%
+  mutate(MA_vol = rollapply(log_return, width = W, FUN = sd, align = "right", fill = NA))
+
+
+# EWMA volatility
+
+lambda <- 0.94
+
+ewma_vol <- numeric(length(HSBC_data$log_return))
+ewma_vol[1] <- sd(HSBC_data$log_return[1:W])
+
+for (t in 2:length(ewma_vol)){
+  ewma_vol[t] <- sqrt((1 - lambda)* HSBC_data$log_return[t-1]^2 + lambda * ewma_vol[t-1]^2)
+}
+
+HSBC_data$EWMA_vol <- ewma_vol
+
+ggplot(HSBC_data, aes(x = date)) +
+  geom_line(aes(y = MA_vol, color = "MA(21) Volatility")) +
+  geom_line(aes(y = EWMA_vol, color = "EWMA(0.94) Volatility")) +
+  labs(title = "HSBC: MA vs. EWMA Volatility", x = "Date", y = "Volatility", color = "Model") +
+  theme_minimal()
 ```
 
 ## b.
-```{r echo=TRUE, fig.dim=c(12,8)}
-# Perform Jarque-Bera normality test
-library(tseries)
-jb_test <- jarque.bera.test(compoundedReturns)
-jb_test
+```{r echo=TRUE, fig.dim=c(5,4), fig.align='center'}
 
-# Show the results of the JB test
-jbTest_summaryStatistics <- data.frame(
-  JB_Test_Statistic = round(jb_test$statistic, 2),
-  Critical_Value = round(qchisq(0.95, 2), 2),
-  p_Value = round(jb_test$p.value, 2) 
-)
+# calculate standrized residuals
+HSBC_data <- HSBC_data %>%
+  mutate(resid_MA = log_return / MA_vol,
+         resid_EWMA = log_return / EWMA_vol)
 
-jbTest_summaryStatistics
+# Ljung-Box Test
 
-# QQ Plot of daily log returns
-ggplot(single_logReturns_df, aes(sample = compoundedReturns)) +
-  stat_qq(shape = 1, color = 'blue', size = 1) +
-  stat_qq_line(color = 'red', linewidth = 1) +
-  labs(title = 'QQ Plot for HSBC Log Returns',
-       x = 'Theoretical Quantiles', y = 'Sample Quantiles') +
-  theme_minimal()
-ggsave('figures/returns_qqplot.png', dpi = 300)
+# residual autocorrelation checking
+Box.test(HSBC_data$resid_MA, lag = 30, type = "Ljung-Box")
+Box.test(HSBC_data$resid_EWMA, lag = 30, type = "Ljung-Box")
+
+# squared residual autocorrelation checking/cluster
+Box.test(HSBC_data$resid_MA^2, lag = 20, type = "Ljung-Box")
+Box.test(HSBC_data$resid_EWMA^2, lag = 20, type = "Ljung-Box")
+
+# plot acf
+par(mfrow = c(2, 2))
+acf(na.omit(HSBC_data$resid_MA), main = "ACF of MA Residuals", ylim = c(-0.2, 0.2))
+acf(na.omit(HSBC_data$resid_MA^2), main = "ACF of MA Aquared Residuals", ylim = c(-0.2, 0.2))
+acf(na.omit(HSBC_data$resid_EWMA), main = "ACF of EWMA Residuals", ylim = c(-0.2, 0.2))
+acf(na.omit(HSBC_data$resid_EWMA^2), main = "ACF of EWMA Squared Residuals", ylim = c(-0.2, 0.2))
+
 ```
