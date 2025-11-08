@@ -17,9 +17,16 @@ nameOfStock <- raw$Stock.Name[groupNumber]
 startDate <- raw$Start.Date[groupNumber]
 endDate <- raw$`End.Date.(+10y)`[groupNumber]
 
+# Compute the start date of the final five years
+library(lubridate)
+
+originalDate <- as.Date(startDate)
+finalFiveYearsStartDate <- originalDate %m+% years(5)
+
 # Extract the daily stock price from source
 library(quantmod)
-getSymbols(nameOfStock, src = 'yahoo', from = startDate, to = endDate)
+
+getSymbols(nameOfStock, src = 'yahoo', from = finalFiveYearsStartDate, to = endDate)
 date <- index(HSBC)
 
 # Adjusted Close
@@ -30,71 +37,84 @@ compoundedReturns <- numeric(length(adjustedPrice) - 1)
 for(i in (2:length(adjustedPrice))){
   compoundedReturns[i-1] <- log(adjustedPrice[i] / adjustedPrice[i-1])
 }
+# Squared Log Returns
+squaredCompoundedReturns <- compoundedReturns ^ 2
 
-library(ggplot2)
-prices_df <- data.frame(date = date, adjustedPrice = adjustedPrice)
-returns_df <- data.frame(date = date[2:length(date)], compoundedReturns = compoundedReturns)
+# Function to compute the ACF and plot the graph
+plotACF <- function(input_list, input_maxLags, objectName, savePath) {
+  ACFResult <- acf(input_list, lag.max = input_maxLags, plot = FALSE)
+  
+  ACFValues <- ACFResult$acf[-1]
+  lags <- ACFResult$lag[-1]
+  numberOfObservations <- length(input_list)
+  confidenceBands <- 1.96 * 1 / sqrt(length(input_list))
+  
+  library(ggplot2)
+  plot_df <- data.frame(lag = lags, acf = ACFValues)
+  
+  ggplot(plot_df, aes(x = lag, y = acf)) +
+    geom_bar(aes(color = 'ACF'), stat = 'identity', 
+             fill ='blue', width = 0.05) +
+    geom_hline(yintercept = 0, color = 'black') +
+    geom_hline(aes(yintercept = -confidenceBands, 
+               color = '95% Confidence Interval'), linetype = 'dashed') + 
+    geom_hline(aes(yintercept = confidenceBands, 
+               color = '95% Confidence Interval'), linetype = 'dashed') +
+    scale_color_manual(name = 'Components',
+                       values = c('ACF' = 'blue',
+                                  '95% Confidence Interval' = 'red')) +
+    labs(title = paste('ACF for HSBC', objectName, 'for', input_maxLags, 'Lags (2015M11-2020M11)'), 
+         x = 'Lag', y = 'ACF') +
+    theme_minimal() +
+    theme(legend.position = c(0.95, 0.95),
+          legend.justification = c("right", "top"),
+          legend.title = element_text(size = 12, face = "bold"),
+          legend.text = element_text(size = 10))
+  ggsave(savePath, width = 10, height = 6, dpi = 300)
+}
 
-# Plot of daily stock price
-ggplot(prices_df, aes(x = date, y = adjustedPrice)) +
-  geom_line(color = 'navy', linewidth = 1) +
-  geom_smooth(color = 'orange', se = FALSE) +
-  labs(
-    title = paste(nameOfStock, 'Adjusted Stock Prices with Trend (2010 - 2020)'),
-    x = 'Year',
-    y = 'Adjusted Close Price') +
-  theme_minimal()
-ggsave('figures/prices_plot.png', dpi = 300)
+returns_result <- plotACF(compoundedReturns, 
+                  input_maxLags = 50,
+                  objectName = 'Log Returns', 
+                  savePath = 'figures/returns_acf_plot.png')
 
-# Plot of daily log returns
-ggplot(returns_df, aes(x = date, y = compoundedReturns)) +
-  geom_line(color = 'navy', na.rm = TRUE, linewidth = 1) +
-  labs(
-    title = paste(nameOfStock, 'Daily Log Returns(2010 - 2020)'),
-    x = 'Year',
-    y = 'Log Returns') +
-  theme_minimal()
-ggsave('figures/returns_plot.png', dpi = 300)
+squaredReturns_result <- plotACF(squaredCompoundedReturns, 
+                                 input_maxLags = 50,
+                                 objectName = 'Squared Log Returns', 
+                                 savePath = 'figures/squaredReturns_acf_plot.png')
 ```
 
 ## b.
 ```{r echo=TRUE,fig.dim=c(5,4),fig.align='center'}
-# Compute some relevant summary statistics of Adjusted Close
-library(moments)
-price_mean <- mean(adjustedPrice)
-price_stdev <- sd(adjustedPrice)
-price_minimum <- min(adjustedPrice)
-price_maximum <- max(adjustedPrice)
-price_median <- median(adjustedPrice)
-price_10_percentile <- quantile(adjustedPrice, 0.1)
-price_90_percentile <- quantile(adjustedPrice, 0.9)
-price_skewness <- skewness(adjustedPrice)
-price_kurtosis <- kurtosis(adjustedPrice)
+# Function to perform the Ljung-Box test and report the result
+LBTest <- function(input_series, input_maxLags, steps){
+  steppedLags <- seq(steps, input_maxLags, by = steps)
+  
+  result_df <- data.frame(Lag = integer(),
+                          Statistic = numeric(),
+                          Crit_Value = numeric(),
+                          P_Value = numeric())
+  
+  for (lag in steppedLags) {
+    lb_test <- Box.test(input_series, lag = lag, type = 'Ljung-Box')
+    testStatistic <- as.numeric(lb_test$statistic)
+    pValue <- as.numeric(lb_test$p.value)
+    criticalValue <- qchisq(0.95, df = lag)
+  
+    newRow <- data.frame(Lag = lag, 
+                         Statistic = round(testStatistic, 4),
+                         Critical_Value = round(criticalValue, 4),
+                         P_Value = signif(pValue, 4))
+    
+    result_df <- rbind(result_df,newRow)
+  }
+  return(result_df)
+}
 
-price_summaryStatistics <- data.frame(
-  Statistics = c('Mean', 'Std. Deviation', 'Minimum', 'P10', 'Median', 'P90', 'Maximum','Skewness', 'Kurtosis'),
-  Values = round(c(price_mean, price_stdev, price_minimum, price_10_percentile, price_median, price_90_percentile, price_maximum, price_skewness, price_kurtosis), 6))
-
-price_summaryStatistics
-
-# Compute some relevant summary statistics of Log Returns
-logReturns_mean <- mean(compoundedReturns)
-logReturns_stdev <- sd(compoundedReturns)
-logReturns_minimum <- min(compoundedReturns)
-logReturns_maximum <- max(compoundedReturns)
-logReturns_median <- median(compoundedReturns)
-logReturns_10_percentile <- quantile(compoundedReturns, 0.1)
-logReturns_90_percentile <- quantile(compoundedReturns, 0.9)
-logReturns_skewness <- skewness(compoundedReturns)
-logReturns_kurtosis <- kurtosis(compoundedReturns)
-logReturns_acf_Returns_oneLag <- acf(compoundedReturns, lag.max = 1, plot = FALSE)$acf[2]
-logReturns_acf_squaredReturns_oneLag <- acf(compoundedReturns^2, lag.max = 1, plot = FALSE)$acf[2]
-
-logReturns_summaryStatistics <- data.frame(
-  Statistics = c('Mean', 'Std. Deviation', 'Minimum', 'P10', 'Median', 'P90', 'Maximum', 'Skewness', 'Kurtosis', 'Autocorrelation (one lag) of returns', 'Autocorrelation (one lag) of squared returns'),
-  Values = round(c(logReturns_mean, logReturns_stdev, logReturns_minimum, logReturns_10_percentile, logReturns_median, logReturns_90_percentile, logReturns_maximum, logReturns_skewness, logReturns_kurtosis,  logReturns_acf_Returns_oneLag, logReturns_acf_squaredReturns_oneLag), 6))
-
-logReturns_summaryStatistics
+returns_LBTest <- LBTest(compoundedReturns, 50, 10)
+returns_LBTest
+returns_LBTest <- LBTest(squaredCompoundedReturns, 50, 10)
+returns_LBTest
 ```
 
 # Question 2
