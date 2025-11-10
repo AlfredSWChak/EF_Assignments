@@ -121,75 +121,95 @@ returns_LBTest
 
 ## a.
 ```{r echo=TRUE, fig.dim=c(5,4),fig.align='center'}
+# compute the MA volatility
+window <- 300
 
-library(tidyquant)
-library(dplyr)
-library(ggplot2)
-library(forecast)
-library(zoo)
+hat_y <- numeric(length(compoundedReturns)-window)
+MA_volatility <- numeric(length(compoundedReturns)-window)
 
-setwd("~/Downloads/EF_A2")
-
-# windows
-W <- 21
-
-# getting data
-HSBC_data <- tq_get("HSBC", get = "stock.prices", from = "2016-11-01", to = "2020-11-01")
-
-
-# log returns
-HSBC_data <- HSBC_data %>%
-  mutate(log_return = log(adjusted / lag(adjusted))) %>%
-  filter(!is.na(log_return))
-
-# MA volatility
-HSBC_data <- HSBC_data %>%
-  mutate(MA_vol = rollapply(log_return, width = W, FUN = sd, align = "right", fill = NA))
-
-
-# EWMA volatility
-
-lambda <- 0.94
-
-ewma_vol <- numeric(length(HSBC_data$log_return))
-ewma_vol[1] <- sd(HSBC_data$log_return[1:W])
-
-for (t in 2:length(ewma_vol)){
-  ewma_vol[t] <- sqrt((1 - lambda)* HSBC_data$log_return[t-1]^2 + lambda * ewma_vol[t-1]^2)
+for (t in window:length(compoundedReturns)){
+  hat_y[t-window+1] <- mean(compoundedReturns[(t-window+1):(t)])
+  MA_volatility[t-window+1] <- sqrt(1/(window-1) * sum(sapply(0:(window-1), 
+                               function(j) (compoundedReturns[t-j])^2)))
 }
 
-HSBC_data$EWMA_vol <- ewma_vol
+# compute the EWMA volatility
+lambda <- 0.94
 
-ggplot(HSBC_data, aes(x = date)) +
-  geom_line(aes(y = MA_vol, color = "MA(21) Volatility")) +
-  geom_line(aes(y = EWMA_vol, color = "EWMA(0.94) Volatility")) +
-  labs(title = "HSBC: MA vs. EWMA Volatility", x = "Date", y = "Volatility", color = "Model") +
+EWMA_volatility <- numeric(length(compoundedReturns)+1)
+
+for (t in 1:length(compoundedReturns)){
+  EWMA_volatility[t+1] <- sqrt((1 - lambda) * (compoundedReturns[t]^2) 
+                          + lambda * EWMA_volatility[t]^2)
+}
+
+MA_df <- data.frame(MA_vol = MA_volatility, 
+                    EWMA_vol = EWMA_volatility[window:length(compoundedReturns)],
+                    date = date[window:length(compoundedReturns)])
+
+ggplot(MA_df, aes(x = date)) +
+  geom_line(aes(y = MA_vol, color = 'MA Volatility')) +
+  geom_line(aes(y = EWMA_vol, color = 'EWMA Volatility')) +
+  labs(title = paste('MA Volatility (W=', window, 
+                     ') and EWMA Volatility (λ=', lambda, 
+                     ') for HSBC Log Returns (2015M11-2020M11)'),
+       x = 'Date', y = 'Volatility', color = 'Model') +
   theme_minimal()
+ggsave('figures/ma_plot.png', dpi = 300)
 ```
 
 ## b.
 ```{r echo=TRUE, fig.dim=c(5,4), fig.align='center'}
-
 # calculate standrized residuals
-HSBC_data <- HSBC_data %>%
-  mutate(resid_MA = log_return / MA_vol,
-         resid_EWMA = log_return / EWMA_vol)
-
-# Ljung-Box Test
+residual <- (compoundedReturns[(window+1):length(compoundedReturns)])
+residual_MA <- residual / MA_volatility[1:(length(hat_y)-1)]
+residual_EWMA <- residual / EWMA_volatility[window:(length(compoundedReturns)-1)]
 
 # residual autocorrelation checking
-Box.test(HSBC_data$resid_MA, lag = 30, type = "Ljung-Box")
-Box.test(HSBC_data$resid_EWMA, lag = 30, type = "Ljung-Box")
+MA_result <- plotACF(residual_MA,
+                     input_maxLags = window,
+                     objectName = 'Log Returns',
+                     savePath = 'figures/residuals_MA_acf_plot.png')
+EWMA_result <- plotACF(residual_EWMA,
+                       input_maxLags = window,
+                       objectName = 'Squared Log Returns',
+                       savePath = 'figures/residuals_EWMA_acf_plot.png')
 
-# squared residual autocorrelation checking/cluster
-Box.test(HSBC_data$resid_MA^2, lag = 20, type = "Ljung-Box")
-Box.test(HSBC_data$resid_EWMA^2, lag = 20, type = "Ljung-Box")
+# Distribution of Standardized Residuals
+residual_df <- data.frame(MA_vol =  residual_MA,
+                          EWMA_vol = residual_EWMA)
 
-# plot acf
-par(mfrow = c(2, 2))
-acf(na.omit(HSBC_data$resid_MA), main = "ACF of MA Residuals", ylim = c(-0.2, 0.2))
-acf(na.omit(HSBC_data$resid_MA^2), main = "ACF of MA Aquared Residuals", ylim = c(-0.2, 0.2))
-acf(na.omit(HSBC_data$resid_EWMA), main = "ACF of EWMA Residuals", ylim = c(-0.2, 0.2))
-acf(na.omit(HSBC_data$resid_EWMA^2), main = "ACF of EWMA Squared Residuals", ylim = c(-0.2, 0.2))
+ggplot(residual_df, aes(x = MA_vol)) +
+  geom_histogram(aes(y = ..density..), 
+                 bins = 50, fill = 'skyblue', color = 'blue') +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residual_MA, na.rm = TRUE),
+                            sd = sd(residual_MA, na.rm = TRUE)),
+                color = 'black', linewidth = 1, linetype = 'dashed') +
+  labs(title = 'Under MA Volatility Models',
+       x = 'Standardized Residuals', y = 'Density')
+ggsave('figures/MA_residual_distribution.png', width = 6, height = 6, dpi = 300)
 
+ggplot(residual_df, aes(x = EWMA_vol)) +
+  geom_histogram(aes(y = ..density..), 
+                 bins = 50, fill = 'orange', color = 'darkorange') +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(residual_EWMA, na.rm = TRUE),
+                            sd = sd(residual_EWMA, na.rm = TRUE)),
+                color = 'black', linewidth = 1, linetype = 'dashed') +
+  labs(title = 'Under EWMA Volatility Models',
+       x = 'Standardized Residuals', y = 'Density')
+ggsave('figures/EWMA_residual_distribution.png', width = 6, height = 6, dpi = 300)
+
+# Ljung-Box Test
+MA_LBTest <- LBTest((residual_MA^2), 50, 10)
+MA_LBTest
+EWMA_LBTest <- LBTest((residual_EWMA^2), 50, 10)
+EWMA_LBTest
+
+library('tseries')
+
+# Jarque-Bera Test
+jarque.bera.test(residual_MA)
+jarque.bera.test(residual_EWMA)
 ```
