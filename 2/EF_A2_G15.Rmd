@@ -180,25 +180,39 @@ residual_df <- data.frame(MA_vol =  residual_MA,
                           EWMA_vol = residual_EWMA)
 
 ggplot(residual_df, aes(x = MA_vol)) +
-  geom_histogram(aes(y = ..density..), 
-                 bins = 50, fill = 'skyblue', color = 'blue') +
+  geom_histogram(aes(y = ..density.., color = 'Empirical Distribution'), 
+                 bins = 50, fill = 'skyblue') +
   stat_function(fun = dnorm,
                 args = list(mean = mean(residual_MA, na.rm = TRUE),
                             sd = sd(residual_MA, na.rm = TRUE)),
-                color = 'black', linewidth = 1, linetype = 'dashed') +
+                aes(color = 'Normal Distribution'), linewidth = 1, linetype = 'dashed') +
+  scale_color_manual(name = "Distributions",
+                     values = c('Normal Distribution' = 'black',
+                                'Empirical Distribution' = 'blue')) +
   labs(title = 'Under MA Volatility Models',
-       x = 'Standardized Residuals', y = 'Density')
+       x = 'Standardized Residuals', y = 'Density') +
+  theme(legend.position = c(0.95, 0.95),
+          legend.justification = c("right", "top"),
+          legend.title = element_text(size = 12, face = "bold"),
+          legend.text = element_text(size = 10))
 ggsave('figures/MA_residual_distribution.png', width = 6, height = 6, dpi = 300)
 
 ggplot(residual_df, aes(x = EWMA_vol)) +
-  geom_histogram(aes(y = ..density..), 
-                 bins = 50, fill = 'orange', color = 'darkorange') +
+  geom_histogram(aes(y = ..density.., color = 'Empirical Distribution'), 
+                 bins = 50, fill = 'orange') +
   stat_function(fun = dnorm,
                 args = list(mean = mean(residual_EWMA, na.rm = TRUE),
                             sd = sd(residual_EWMA, na.rm = TRUE)),
-                color = 'black', linewidth = 1, linetype = 'dashed') +
+                aes(color = 'Normal Distribution'), linewidth = 1, linetype = 'dashed') +
+  scale_color_manual(name = "Distributions",
+                     values = c('Normal Distribution' = 'black',
+                                'Empirical Distribution' = 'darkorange')) +
   labs(title = 'Under EWMA Volatility Models',
-       x = 'Standardized Residuals', y = 'Density')
+       x = 'Standardized Residuals', y = 'Density') +
+  theme(legend.position = c(0.95, 0.95),
+          legend.justification = c("right", "top"),
+          legend.title = element_text(size = 12, face = "bold"),
+          legend.text = element_text(size = 10))
 ggsave('figures/EWMA_residual_distribution.png', width = 6, height = 6, dpi = 300)
 
 # Ljung-Box Test
@@ -210,6 +224,23 @@ EWMA_LBTest
 library('tseries')
 
 # Jarque-Bera Test
-jarque.bera.test(residual_MA)
-jarque.bera.test(residual_EWMA)
+MA_JBTest <- jarque.bera.test(residual_MA)
+EWMA_JBTest <- jarque.bera.test(residual_EWMA)
+
+JBTest_result_df <- data.frame(Model = character(),
+                          Statistic = numeric(),
+                          Crit_Value = numeric(),
+                          P_Value = numeric())
+MA_newRow <- data.frame(Model = 'MA', 
+                        Statistic = round(MA_JBTest$statistic, 4),
+                        Critical_Value = round(qchisq(0.95, df = MA_JBTest$parameter), 4),
+                        P_Value = signif(MA_JBTest$p.value, 4))
+EWMA_newRow <- data.frame(Model = 'EWMA', 
+                        Statistic = round(EWMA_JBTest$statistic, 4),
+                        Critical_Value = round(qchisq(0.95, df = EWMA_JBTest$parameter), 4),
+                        P_Value = signif(EWMA_JBTest$p.value, 4))
+    
+JBTest_result_df <- rbind(JBTest_result_df,MA_newRow)
+JBTest_result_df <- rbind(JBTest_result_df,EWMA_newRow)
+JBTest_result_df
 ```
