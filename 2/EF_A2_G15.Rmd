@@ -163,16 +163,16 @@ ggsave('figures/ma_plot.png', dpi = 300)
 # calculate standrized residuals
 residual <- (compoundedReturns[(window+1):length(compoundedReturns)])
 residual_MA <- residual / MA_volatility[1:(length(hat_y)-1)]
-residual_EWMA <- residual / EWMA_volatility[window:(length(compoundedReturns)-1)]
+residual_EWMA <- residual / EWMA_volatility[(window+1):(length(compoundedReturns))]
 
 # residual autocorrelation checking
-MA_result <- plotACF(residual_MA,
-                     input_maxLags = window,
-                     objectName = 'Log Returns',
+MA_result <- plotACF(residual_MA^2,
+                     input_maxLags = 50,
+                     objectName = 'Squared Standardized Residuals under MA',
                      savePath = 'figures/residuals_MA_acf_plot.png')
-EWMA_result <- plotACF(residual_EWMA,
-                       input_maxLags = window,
-                       objectName = 'Squared Log Returns',
+EWMA_result <- plotACF(residual_EWMA^2,
+                       input_maxLags = 50,
+                       objectName = 'Squared Standardized Residuals under EWMA',
                        savePath = 'figures/residuals_EWMA_acf_plot.png')
 
 # Distribution of Standardized Residuals
