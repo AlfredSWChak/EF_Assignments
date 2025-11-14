@@ -21,21 +21,23 @@ endDate <- raw$`End.Date.(+10y)`[groupNumber]
 library(lubridate)
 
 originalDate <- as.Date(startDate)
-endDate_firstFiveYears <- originalDate %m+% years(5)
+endDate_fiveYears <- originalDate %m+% years(5)
 
 # Extract the daily stock price from source
 library(quantmod)
 
-getSymbols(nameOfStock, src = 'yahoo', from = startDate, to = endDate_firstFiveYears)
+getSymbols(nameOfStock, src = 'yahoo', from = startDate, to = endDate)
 date <- index(HSBC)
 
+firstFiveYear <- window(HSBC, start = startDate, end = endDate_fiveYears)
+
 # Adjusted Close
-adjustedPrice <- as.numeric(HSBC[,'HSBC.Adjusted'])
+adjustedPrice_firstFiveYears<- as.numeric(firstFiveYear[,'HSBC.Adjusted'])
 
 # Log Returns
-compoundedReturns <- numeric(length(adjustedPrice) - 1)
-for(i in (2:length(adjustedPrice))){
-  compoundedReturns[i-1] <- log(adjustedPrice[i] / adjustedPrice[i-1])
+compoundedReturns_firstFiveYears <- numeric(length(adjustedPrice_firstFiveYears) - 1)
+for(i in (2:length(adjustedPrice_firstFiveYears))){
+  compoundedReturns_firstFiveYears[i-1] <- log(adjustedPrice_firstFiveYears[i] / adjustedPrice_firstFiveYears[i-1])
 }
 
 library(rugarch)
@@ -47,13 +49,76 @@ ar1garch11_spec_norm <- ugarchspec(variance.model = list(model = 'sGARCH',
                         include.mean = TRUE),
                         distribution.model = 'norm')
 
-ar1garch11_fit_norm <- ugarchfit(spec = ar1garch11_spec_norm, data = compoundedReturns)
+ar1garch11_fit_norm <- ugarchfit(spec = ar1garch11_spec_norm, data = compoundedReturns_firstFiveYears)
 
 ar1garch11_fit_norm@fit$matcoef
 ```
 
 ## b.
 ```{r echo=TRUE,fig.dim=c(5,4),fig.align='center'}
+
+lastFiveYear <- window(HSBC, start = endDate_fiveYears, end = endDate)
+
+# Adjusted Close
+adjustedPrice_lastFiveYears<- as.numeric(lastFiveYear[,'HSBC.Adjusted'])
+
+# Log Returns
+compoundedReturns_lastFiveYears <- numeric(length(adjustedPrice_lastFiveYears) - 1)
+for(i in (2:length(adjustedPrice_lastFiveYears))){
+  compoundedReturns_lastFiveYears[i-1] <- log(adjustedPrice_lastFiveYears[i] / adjustedPrice_lastFiveYears[i-1])
+}
+
+mu_norm <- coef(ar1garch11_fit_norm)['mu']
+ar1_norm <- coef(ar1garch11_fit_norm)['ar1']
+omege_norm <- coef(ar1garch11_fit_norm)['omega']
+alpha1_norm <- coef(ar1garch11_fit_norm)['alpha1']
+beta1_norm <- coef(ar1garch11_fit_norm)['beta1']
+sum_alphaBeta <- alpha1_norm + beta1_norm
+
+t <- length(compoundedReturns_firstFiveYears)
+returns_t <- compoundedReturns_firstFiveYears[t]
+eps_t <- ar1garch11_fit_norm@fit$residuals[t]
+var_t <- ar1garch11_fit_norm@fit$var[t]
+
+oneAhead_var <- omege_norm + alpha1_norm * (eps_t^2) + beta1_norm * (var_t^2)
+
+forecast_returns <- numeric(length(compoundedReturns_lastFiveYears))
+forecast_variance <- numeric(length(compoundedReturns_lastFiveYears))
+
+for (i in 1:length(compoundedReturns_lastFiveYears)){
+  forecast_returns[i] <- (sum(sapply(0:(i-1), function(j) ar1_norm^j)) * mu_norm) + ar1_norm^i * returns_t
+  if (i == 1) {
+    forecast_variance[i] <- oneAhead_var
+  } else {
+    forecast_variance[i] <- (sum(sapply(0:(i-2), 
+                                        function(j) sum_alphaBeta^j))) * omege_norm + sum_alphaBeta^(i-1) * oneAhead_var
+  }
+}
+
+standardized_returns <- (compoundedReturns_lastFiveYears - forecast_returns) / forecast_variance
+
+library(ggplot2)
+
+# Distribution of Standardized Returns
+returns_df <- data.frame(standardizedReturns = standardized_returns)
+
+ggplot(returns_df, aes(x = standardizedReturns)) +
+  geom_histogram(aes(y = ..density.., color = 'Empirical Distribution'), 
+                 bins = 50, fill = 'skyblue') +
+  stat_function(fun = dnorm,
+                args = list(mean = mean(standardized_returns, na.rm = TRUE),
+                            sd = sd(standardized_returns, na.rm = TRUE)),
+                aes(color = 'Normal Distribution'), linewidth = 1, linetype = 'dashed') +
+  scale_color_manual(name = "Distributions",
+                     values = c('Normal Distribution' = 'black',
+                                'Empirical Distribution' = 'blue')) +
+  labs(title = 'Distribution of Standardized Returns',
+       x = 'Standardized Returns', y = 'Density') +
+  theme(legend.position = c(0.95, 0.95),
+          legend.justification = c("right", "top"),
+          legend.title = element_text(size = 12, face = "bold"),
+          legend.text = element_text(size = 10))
+ggsave('figures/standardizedReturns_distribution.png', width = 6, height = 6, dpi = 300)
 
 ```
 
@@ -67,7 +132,7 @@ ar1garch11_spec_t <- ugarchspec(variance.model = list(model = 'sGARCH',
                         include.mean = TRUE),
                         distribution.model = 'std')
 
-ar1garch11_fit_t <- ugarchfit(spec = ar1garch11_spec_t, data = compoundedReturns)
+ar1garch11_fit_t <- ugarchfit(spec = ar1garch11_spec_t, data = compoundedReturns_fiveYears)
 
 ar1garch11_fit_t@fit$matcoef
 ```
