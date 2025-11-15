@@ -56,18 +56,19 @@ ar1garch11_fit_norm@fit$matcoef
 
 ## b.
 ```{r echo=TRUE,fig.dim=c(5,4),fig.align='center'}
-
+# extract the data of last five years
 lastFiveYear <- window(HSBC, start = endDate_fiveYears, end = endDate)
 
 # Adjusted Close
 adjustedPrice_lastFiveYears<- as.numeric(lastFiveYear[,'HSBC.Adjusted'])
 
-# Log Returns
+# compute the Daily Log Returns
 compoundedReturns_lastFiveYears <- numeric(length(adjustedPrice_lastFiveYears) - 1)
 for(i in (2:length(adjustedPrice_lastFiveYears))){
   compoundedReturns_lastFiveYears[i-1] <- log(adjustedPrice_lastFiveYears[i] / adjustedPrice_lastFiveYears[i-1])
 }
 
+# extract the estimated parameters
 mu_norm <- coef(ar1garch11_fit_norm)['mu']
 ar1_norm <- coef(ar1garch11_fit_norm)['ar1']
 omege_norm <- coef(ar1garch11_fit_norm)['omega']
@@ -80,13 +81,18 @@ returns_t <- compoundedReturns_firstFiveYears[t]
 eps_t <- ar1garch11_fit_norm@fit$residuals[t]
 var_t <- ar1garch11_fit_norm@fit$var[t]
 
-oneAhead_var <- omege_norm + alpha1_norm * (eps_t^2) + beta1_norm * (var_t^2)
+# compute the 1-step ahead variance
+oneAhead_var <- omege_norm + alpha1_norm * (eps_t^2) + beta1_norm * (var_t)
 
 forecast_returns <- numeric(length(compoundedReturns_lastFiveYears))
 forecast_variance <- numeric(length(compoundedReturns_lastFiveYears))
 
+# compute the returns and variance forecast for the next 5 years
 for (i in 1:length(compoundedReturns_lastFiveYears)){
+  # Forecast for Log Returns 
   forecast_returns[i] <- (sum(sapply(0:(i-1), function(j) ar1_norm^j)) * mu_norm) + ar1_norm^i * returns_t
+  
+  # Forecast for Variance
   if (i == 1) {
     forecast_variance[i] <- oneAhead_var
   } else {
@@ -95,6 +101,9 @@ for (i in 1:length(compoundedReturns_lastFiveYears)){
   }
 }
 
+print(forecast_variance)
+
+# standardize the Daily Log Returns
 standardized_returns <- (compoundedReturns_lastFiveYears - forecast_returns) / forecast_variance
 
 library(ggplot2)
@@ -119,7 +128,6 @@ ggplot(returns_df, aes(x = standardizedReturns)) +
           legend.title = element_text(size = 12, face = "bold"),
           legend.text = element_text(size = 10))
 ggsave('figures/standardizedReturns_distribution.png', width = 6, height = 6, dpi = 300)
-
 ```
 
 # Question 2
