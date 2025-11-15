@@ -42,7 +42,7 @@ for(i in (2:length(adjustedPrice_firstFiveYears))){
 
 library(rugarch)
 
-# Specify AR(1)-GARCH(1,1) model uwith normally distributed errors
+# Specify AR(1)-GARCH(1,1) model with normally distributed errors
 ar1garch11_spec_norm <- ugarchspec(variance.model = list(model = 'sGARCH',
                                                     garchOrder = c(1, 1)),
                               mean.model = list(armaOrder = c(1, 0),
@@ -59,7 +59,7 @@ ar1garch11_fit_norm@fit$matcoef
 # extract the data of last five years
 lastFiveYear <- window(HSBC, start = endDate_fiveYears, end = endDate)
 
-# Adjusted Close
+# extract the Adjusted Close
 adjustedPrice_lastFiveYears<- as.numeric(lastFiveYear[,'HSBC.Adjusted'])
 
 # compute the Daily Log Returns
@@ -101,8 +101,6 @@ for (i in 1:length(compoundedReturns_lastFiveYears)){
   }
 }
 
-print(forecast_variance)
-
 # standardize the Daily Log Returns
 standardized_returns <- (compoundedReturns_lastFiveYears - forecast_returns) / forecast_variance
 
@@ -112,7 +110,7 @@ library(ggplot2)
 returns_df <- data.frame(standardizedReturns = standardized_returns)
 
 ggplot(returns_df, aes(x = standardizedReturns)) +
-  geom_histogram(aes(y = ..density.., color = 'Empirical Distribution'), 
+  geom_histogram(aes(y = after_stat(density), color = 'Empirical Distribution'), 
                  bins = 50, fill = 'skyblue') +
   stat_function(fun = dnorm,
                 args = list(mean = mean(standardized_returns, na.rm = TRUE),
@@ -140,12 +138,29 @@ ar1garch11_spec_t <- ugarchspec(variance.model = list(model = 'sGARCH',
                         include.mean = TRUE),
                         distribution.model = 'std')
 
-ar1garch11_fit_t <- ugarchfit(spec = ar1garch11_spec_t, data = compoundedReturns_fiveYears)
+ar1garch11_fit_t <- ugarchfit(spec = ar1garch11_spec_t, data = compoundedReturns_firstFiveYears)
 
 ar1garch11_fit_t@fit$matcoef
 ```
 
 ## b.
 ```{r echo=TRUE, fig.dim=c(5,4), fig.align='center'}
+# compute the likelihood
+logLikelihood_norm <- (likelihood(ar1garch11_fit_norm)) # restricted
+logLikelihood_t <- (likelihood(ar1garch11_fit_t)) # unrestricted
 
+# compute the test statistic
+LR  <- -2 * (logLikelihood_norm - logLikelihood_t)
+
+degreeOfFreedom  <- 1
+criticalValue <- qchisq(0.95, df = degreeOfFreedom)
+pValue <- 1 - pchisq(LR, df = degreeOfFreedom)
+
+likelihoodRatioTest_result_df <- data.frame(LogL_Norm = logLikelihood_norm,
+                                            LogL_t = logLikelihood_t,
+                                            TestStatistic = LR,
+                                            DF = degreeOfFreedom,
+                                            CriticalValue = criticalValue,
+                                            PValue = pValue)
+likelihoodRatioTest_result_df 
 ```
