@@ -9,7 +9,13 @@ output: pdf_document
 
 ## a.
 ```{r echo=TRUE,fig.dim=c(5,4),fig.align='center'}
-library(openxlsx)
+# Load required packages
+library(openxlsx)   # Excel file handling
+library(lubridate)  # Date/time utilities
+library(quantmod)   # Financial data & modeling
+library(rugarch)    # GARCH/AR-GARCH models
+library(ggplot2)    # Data visualization
+
 raw <- read.xlsx('student_groups_stocks.xlsx', sheet = 1)
 
 groupNumber <- 15
@@ -17,39 +23,34 @@ nameOfStock <- raw$Stock.Name[groupNumber]
 startDate <- raw$Start.Date[groupNumber]
 endDate <- raw$`End.Date.(+10y)`[groupNumber]
 
-# Compute the start date of the final five years
-library(lubridate)
-
+# compute the start date of the final five years
 originalDate <- as.Date(startDate)
 endDate_fiveYears <- originalDate %m+% years(5)
 
-# Extract the daily stock price from source
-library(quantmod)
-
+# extract the daily stock price from source
 getSymbols(nameOfStock, src = 'yahoo', from = startDate, to = endDate)
-date <- index(HSBC)
 
+# extract the data of first five years
 firstFiveYear <- window(HSBC, start = startDate, end = endDate_fiveYears)
 
-# Adjusted Close
+# extract the Adjusted Close for the first five years
 adjustedPrice_firstFiveYears<- as.numeric(firstFiveYear[,'HSBC.Adjusted'])
 
-# Log Returns
+# compute the Daily Log Returns for the first five years
 compoundedReturns_firstFiveYears <- numeric(length(adjustedPrice_firstFiveYears) - 1)
 for(i in (2:length(adjustedPrice_firstFiveYears))){
   compoundedReturns_firstFiveYears[i-1] <- log(adjustedPrice_firstFiveYears[i] / adjustedPrice_firstFiveYears[i-1])
 }
 
-library(rugarch)
-
-# Specify AR(1)-GARCH(1,1) model with normally distributed errors
+# specify AR(1)-GARCH(1,1) model under normal distribution
 ar1garch11_spec_norm <- ugarchspec(variance.model = list(model = 'sGARCH',
                                                     garchOrder = c(1, 1)),
-                              mean.model = list(armaOrder = c(1, 0),
+                        mean.model = list(armaOrder = c(1, 0),
                         include.mean = TRUE),
                         distribution.model = 'norm')
 
-ar1garch11_fit_norm <- ugarchfit(spec = ar1garch11_spec_norm, data = compoundedReturns_firstFiveYears)
+ar1garch11_fit_norm <- ugarchfit(spec = ar1garch11_spec_norm, 
+                                 data = compoundedReturns_firstFiveYears)
 
 ar1garch11_fit_norm@fit$matcoef
 ```
@@ -59,10 +60,10 @@ ar1garch11_fit_norm@fit$matcoef
 # extract the data of last five years
 lastFiveYear <- window(HSBC, start = endDate_fiveYears, end = endDate)
 
-# extract the Adjusted Close
+# extract the Adjusted Close for the next five years
 adjustedPrice_lastFiveYears<- as.numeric(lastFiveYear[,'HSBC.Adjusted'])
 
-# compute the Daily Log Returns
+# compute the Daily Log Returns for the next five years
 compoundedReturns_lastFiveYears <- numeric(length(adjustedPrice_lastFiveYears) - 1)
 for(i in (2:length(adjustedPrice_lastFiveYears))){
   compoundedReturns_lastFiveYears[i-1] <- log(adjustedPrice_lastFiveYears[i] / adjustedPrice_lastFiveYears[i-1])
@@ -104,8 +105,6 @@ for (i in 1:length(compoundedReturns_lastFiveYears)){
 # standardize the Daily Log Returns
 standardized_returns <- (compoundedReturns_lastFiveYears - forecast_returns) / forecast_variance
 
-library(ggplot2)
-
 # Distribution of Standardized Returns
 returns_df <- data.frame(standardizedReturns = standardized_returns)
 
@@ -125,20 +124,31 @@ ggplot(returns_df, aes(x = standardizedReturns)) +
           legend.justification = c("right", "top"),
           legend.title = element_text(size = 12, face = "bold"),
           legend.text = element_text(size = 10))
-ggsave('figures/standardizedReturns_distribution.png', width = 6, height = 6, dpi = 300)
+ggsave('figures/standardizedReturns_distribution.png', width = 10, height = 6, dpi = 300)
+
+# QQ Plot of Standardized Returns
+ggplot(returns_df, aes(sample = standardizedReturns)) +
+  stat_qq(shape = 1, color = 'blue', size = 1) +
+  stat_qq_line(color = 'red', linewidth = 1) +
+  labs(title = 'QQ Plot for HSBC Standardized Log Returns',
+       x = 'Theoretical Quantiles', y = 'Sample Quantiles') +
+  theme_minimal()
+ggsave('figures/standardizedReturns_qqplot.png', dpi = 300)
 ```
 
 # Question 2
 
 ## a.
 ```{r echo=TRUE, fig.dim=c(5,4),fig.align='center'}
+# specify AR(1)-GARCH(1,1) model under student t distribution
 ar1garch11_spec_t <- ugarchspec(variance.model = list(model = 'sGARCH',
                                                     garchOrder = c(1, 1)),
-                              mean.model = list(armaOrder = c(1, 0),
-                        include.mean = TRUE),
-                        distribution.model = 'std')
+                                mean.model = list(armaOrder = c(1, 0),
+                                include.mean = TRUE),
+                                distribution.model = 'std')
 
-ar1garch11_fit_t <- ugarchfit(spec = ar1garch11_spec_t, data = compoundedReturns_firstFiveYears)
+ar1garch11_fit_t <- ugarchfit(spec = ar1garch11_spec_t, 
+                              data = compoundedReturns_firstFiveYears)
 
 ar1garch11_fit_t@fit$matcoef
 ```
