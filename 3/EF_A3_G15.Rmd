@@ -103,7 +103,7 @@ for (i in 1:length(compoundedReturns_lastFiveYears)){
 }
 
 # standardize the Daily Log Returns
-standardized_returns <- (compoundedReturns_lastFiveYears - forecast_returns) / forecast_variance
+standardized_returns <- (compoundedReturns_lastFiveYears - forecast_returns) / sqrt(forecast_variance)
 
 # Distribution of Standardized Returns
 returns_df <- data.frame(standardizedReturns = standardized_returns)
