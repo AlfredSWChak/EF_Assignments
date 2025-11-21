@@ -89,7 +89,7 @@ var_t <- ar1garch11_fit_norm@fit$var[t]
 oneAhead_var <- omege_norm + alpha1_norm * (eps_t^2) + beta1_norm * (var_t)
 
 forecast_returns <- numeric(length(simpleReturns_lastFiveYears))
-forecast_variance <- numeric(length(compoundedReturns_lastFiveYears))
+forecast_variance <- numeric(length(simpleReturns_lastFiveYears))
 
 # compute the returns and variance forecast for the next 5 years
 for (i in 1:length(simpleReturns_lastFiveYears)){
@@ -105,19 +105,27 @@ for (i in 1:length(simpleReturns_lastFiveYears)){
   }
 }
 
+probability <- 0.01
+valueAtRisk <- numeric(length(simpleReturns_lastFiveYears))
+
+# compute the forecast of VaR and ES for the last five years
+for (i in 1:length(simpleReturns_lastFiveYears)){
+  valueAtRisk[i] <- -sqrt(forecast_variance[i]) * qnorm(probability) - forecast_returns[i]
+}
+
 returns_df <- data.frame(date = date_lastFiveYear[2:1259],
-                         simpleReturns_forecast = forecast_returns,
+                         VaR = -valueAtRisk,
                          simpleReturns_realized = simpleReturns_lastFiveYears)
 
 ggplot(returns_df, aes(x = date)) +
   geom_line(aes(y = simpleReturns_realized, color = 'Realized Returns'),
             linewidth = 1) +
-  geom_line(aes(y = simpleReturns_forecast, color = 'Forecast Returns'),
-            linewidth = 1) +
-  labs(title = 'Forecast vs Realized for HSBC Daily Simple Returns (2015M11-2020M11)',
+  geom_line(aes(y = VaR, color = 'VaR(0.01)'),
+            linewidth = 1, linetype = 'dashed') +
+  labs(title = 'Realized vs VaR for HSBC Daily Simple Returns (2015M11-2020M11)',
     x = 'Date', y = 'Simple Returns', color = 'Series') +
   scale_color_manual(values = c('Realized Returns' = 'blue',
-                                'Forecast Returns' = 'red')) +
+                                'VaR(0.01)' = 'red')) +
   theme_minimal() +
   theme(legend.position = c(0.9, 0.9),
         legend.background = element_rect(fill = 'white', color = 'grey'),
@@ -129,8 +137,6 @@ ggsave('figures/a_simpleReturns_plot.png', width = 10, height = 6, dpi = 300)
 
 ## b.
 ```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
-probability <- 0.01
-
 expectedShortfall <- numeric(length(simpleReturns_lastFiveYears))
 valueAtRisk <- numeric(length(simpleReturns_lastFiveYears))
 
