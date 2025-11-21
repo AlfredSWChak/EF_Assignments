@@ -1,0 +1,251 @@
+---
+title: "EF Group Submission Assignment 4"
+subtitle: "Group 15" 
+author: "Lanlan Hou (2801069), Rick van der Ploeg (2782774), Sebastiaan van Dijen (2769505) and Alfred Sou (2796840)"
+output: pdf_document
+---
+
+# Question 1
+
+## a.
+```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
+# Load required packages
+library(openxlsx)   # Excel file handling
+library(lubridate)  # Date/time utilities
+library(quantmod)   # Financial data & modeling
+library(rugarch)    # GARCH/AR-GARCH models
+library(ggplot2)    # Data visualization
+
+raw <- read.xlsx('student_groups_stocks.xlsx', sheet = 1)
+
+groupNumber <- 15
+nameOfStock <- raw$Stock.Name[groupNumber]
+startDate <- raw$Start.Date[groupNumber]
+endDate <- raw$`End.Date.(+10y)`[groupNumber]
+
+# compute the start date of the final five years
+originalDate <- as.Date(startDate)
+endDate_fiveYears <- originalDate %m+% years(5)
+
+# extract the daily stock price from source
+getSymbols(nameOfStock, src = 'yahoo', from = startDate, to = endDate)
+
+# extract the data of first five years
+firstFiveYear <- window(HSBC, start = startDate, end = endDate_fiveYears)
+
+# extract the Adjusted Close for the first five years
+adjustedPrice_firstFiveYears<- as.numeric(firstFiveYear[,'HSBC.Adjusted'])
+
+compute_simpleReturns <- function(input_priceSeries){
+  result <- numeric(length(input_priceSeries) - 1)
+  
+  for(i in (2:length(input_priceSeries))){
+    result[i-1] <- (input_priceSeries[i] - input_priceSeries[i-1]) / 
+                    input_priceSeries[i-1]
+  }
+  
+  return(result)
+}
+
+# compute the Daily Simple Returns for the first five years
+simpleReturns_firstFiveYears <- compute_simpleReturns(adjustedPrice_firstFiveYears)
+
+# specify AR(1)-GARCH(1,1) model under normal distribution
+ar1garch11_spec_norm <- ugarchspec(variance.model = list(model = 'sGARCH',
+                                                    garchOrder = c(1, 1)),
+                        mean.model = list(armaOrder = c(1, 0),
+                        include.mean = TRUE),
+                        distribution.model = 'norm')
+
+ar1garch11_fit_norm <- ugarchfit(spec = ar1garch11_spec_norm, 
+                                 data = simpleReturns_firstFiveYears)
+
+ar1garch11_fit_norm@fit$matcoef
+
+# extract the data of last five years
+lastFiveYear <- window(HSBC, start = endDate_fiveYears, end = endDate)
+date_lastFiveYear <- index(lastFiveYear)
+
+# extract the Adjusted Close for the next five years
+adjustedPrice_lastFiveYears<- as.numeric(lastFiveYear[,'HSBC.Adjusted'])
+
+# compute the Daily Simple Returns for the next five years
+simpleReturns_lastFiveYears <- compute_simpleReturns(adjustedPrice_lastFiveYears)
+
+# extract the estimated parameters
+mu_norm <- coef(ar1garch11_fit_norm)['mu']
+ar1_norm <- coef(ar1garch11_fit_norm)['ar1']
+omege_norm <- coef(ar1garch11_fit_norm)['omega']
+alpha1_norm <- coef(ar1garch11_fit_norm)['alpha1']
+beta1_norm <- coef(ar1garch11_fit_norm)['beta1']
+sum_alphaBeta <- alpha1_norm + beta1_norm
+
+t <- length(simpleReturns_firstFiveYears)
+returns_t <- simpleReturns_firstFiveYears[t]
+eps_t <- ar1garch11_fit_norm@fit$residuals[t]
+var_t <- ar1garch11_fit_norm@fit$var[t]
+
+# compute the 1-step ahead variance
+oneAhead_var <- omege_norm + alpha1_norm * (eps_t^2) + beta1_norm * (var_t)
+
+forecast_returns <- numeric(length(simpleReturns_lastFiveYears))
+forecast_variance <- numeric(length(compoundedReturns_lastFiveYears))
+
+# compute the returns and variance forecast for the next 5 years
+for (i in 1:length(simpleReturns_lastFiveYears)){
+  # Forecast for Simple Returns 
+  forecast_returns[i] <- (sum(sapply(0:(i-1), function(j) ar1_norm^j)) * mu_norm) + ar1_norm^i * returns_t
+  
+  # Forecast for Variance
+  if (i == 1) {
+    forecast_variance[i] <- oneAhead_var
+  } else {
+    forecast_variance[i] <- (sum(sapply(0:(i-2), 
+                                        function(j) sum_alphaBeta^j))) * omege_norm + sum_alphaBeta^(i-1) * oneAhead_var
+  }
+}
+
+returns_df <- data.frame(date = date_lastFiveYear[2:1259],
+                         simpleReturns_forecast = forecast_returns,
+                         simpleReturns_realized = simpleReturns_lastFiveYears)
+
+ggplot(returns_df, aes(x = date)) +
+  geom_line(aes(y = simpleReturns_realized, color = 'Realized Returns'),
+            linewidth = 1) +
+  geom_line(aes(y = simpleReturns_forecast, color = 'Forecast Returns'),
+            linewidth = 1) +
+  labs(title = 'Forecast vs Realized for HSBC Daily Simple Returns (2015M11-2020M11)',
+    x = 'Date', y = 'Simple Returns', color = 'Series') +
+  scale_color_manual(values = c('Realized Returns' = 'blue',
+                                'Forecast Returns' = 'red')) +
+  theme_minimal() +
+  theme(legend.position = c(0.9, 0.9),
+        legend.background = element_rect(fill = 'white', color = 'grey'),
+        legend.title = element_text(size = 12, face = 'bold'),
+        legend.text  = element_text(size = 10))
+ggsave('figures/a_simpleReturns_plot.png', width = 10, height = 6, dpi = 300)
+
+```
+
+## b.
+```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
+probability <- 0.01
+
+expectedShortfall <- numeric(length(simpleReturns_lastFiveYears))
+valueAtRisk <- numeric(length(simpleReturns_lastFiveYears))
+
+# compute the forecast of VaR and ES for the last five years
+for (i in 1:length(simpleReturns_lastFiveYears)){
+  expectedShortfall[i] <- sqrt(forecast_variance[i]) * (dnorm(qnorm(probability)) / probability) - forecast_returns[i]
+  
+  valueAtRisk[i] <- -sqrt(forecast_variance[i]) * qnorm(probability) - forecast_returns[i]
+}
+
+risk_df <- data.frame(date = date_lastFiveYear[2:1259],
+                      ES = -expectedShortfall,
+                      VaR = -valueAtRisk,
+                      simpleReturns_realized = simpleReturns_lastFiveYears)
+
+ggplot(risk_df, aes(x = date)) +
+  geom_hline(yintercept = 0, color = 'black', 
+             linewidth = 1, linetype = 'dashed') +
+  geom_line(aes(y = simpleReturns_realized, color = 'Realized Returns'),
+            linewidth = 1) +
+  geom_line(aes(y = ES, color = 'ES(0.01)'),
+            linewidth = 1, linetype = 'dotted') +
+  geom_line(aes(y = VaR, color = 'VaR(0.01)'),
+            linewidth = 1, linetype = 'dashed') +
+  labs(title = 'Realized vs VaR(0.01) vs ES(0.01) for HSBC Daily Simple Returns (2015M11-2020M11)',
+    x = 'Date', y = 'Simple Returns', color = 'Series') +
+  scale_color_manual(values = c('Realized Returns' = 'blue',
+                                'ES(0.01)' = 'red',
+                                'VaR(0.01)' = 'red')) +
+  theme_minimal() +
+  theme(legend.position = c(0.9, 0.9),
+        legend.background = element_rect(fill = 'white', color = 'grey'),
+        legend.title = element_text(size = 12, face = 'bold'),
+        legend.text  = element_text(size = 10))
+ggsave('figures/b_risk_plot.png', width = 10, height = 6, dpi = 300)
+```
+
+# Question 2
+
+## a.
+```{r echo=TRUE, fig.dim=c(5,4),fig.align='center'}
+window <- 3/probability
+
+firstDate <- '2016-01-01'
+secondDate <- '2017-01-01'
+thirdDate <- '2018-01-01'
+fourthDate <- '2019-12-01'
+
+valueAtRisk_NonParametric <- function(input_startDate, input_window, input_probability){
+  this_endDate <- as.Date(input_startDate) %m+% days(input_window)
+  duration <- window(HSBC, start = input_startDate, end = this_endDate)
+  
+  # extract the Adjusted Close for the next five years
+  this_adjustedPrice <- as.numeric(duration[,'HSBC.Adjusted'])
+  
+  this_simpleReturns <- compute_simpleReturns(this_adjustedPrice)
+  sorted_this_simpleReturns <- sort(this_simpleReturns)
+  
+  this_VaR <- -sorted_this_simpleReturns[input_window*input_probability]
+  
+  return(this_VaR)
+}
+
+# compute the VaR using Non-Parametric Approach
+first_VaR <- valueAtRisk_NonParametric(firstDate, window, probability)
+second_VaR <- valueAtRisk_NonParametric(secondDate, window, probability)
+third_VaR <- valueAtRisk_NonParametric(thirdDate, window, probability)
+fourth_VaR <- valueAtRisk_NonParametric(fourthDate, window, probability)
+
+nonParametric_VaR_df = data.frame(Date = c(firstDate, 
+                                           secondDate, 
+                                           thirdDate, 
+                                           fourthDate),
+                                  VaR_0.01 = c(first_VaR, 
+                                               second_VaR, 
+                                               third_VaR, 
+                                               fourth_VaR))
+nonParametric_VaR_df
+```
+
+## b.
+```{r echo=TRUE, fig.dim=c(5,4), fig.align='center'}
+expectedShortfall_NonParametric <- function(input_startDate, input_window, input_probability){
+  this_endDate <- as.Date(input_startDate) %m+% days(input_window)
+  duration <- window(HSBC, start = input_startDate, end = this_endDate)
+  
+  # extract the Adjusted Close for the duration
+  this_adjustedPrice <- as.numeric(duration[,'HSBC.Adjusted'])
+  
+  this_simpleReturns <- compute_simpleReturns(this_adjustedPrice)
+  sorted_this_simpleReturns <- sort(this_simpleReturns)
+  
+  this_VaR <- -sorted_this_simpleReturns[input_window*input_probability]
+  this_ES <- -mean(sorted_this_simpleReturns[1:floor(input_window*input_probability)])
+  
+  return(this_ES)
+}
+
+# compute the ES using Non-Parametric Approach
+first_ES <- expectedShortfall_NonParametric(firstDate, window, probability)
+second_ES <- expectedShortfall_NonParametric(secondDate, window, probability)
+third_ES <- expectedShortfall_NonParametric(thirdDate, window, probability)
+fourth_ES <- expectedShortfall_NonParametric(fourthDate, window, probability)
+
+nonParametric_risk_df = data.frame(Date = c(firstDate, 
+                                            secondDate, 
+                                            thirdDate, 
+                                            fourthDate),
+                                   VaR_0.01 = c(first_VaR, 
+                                                second_VaR, 
+                                                third_VaR, 
+                                                fourth_VaR),
+                                   ES_0.01 = c(first_ES, 
+                                                second_ES, 
+                                                third_ES, 
+                                                fourth_ES))
+nonParametric_risk_df
+```
