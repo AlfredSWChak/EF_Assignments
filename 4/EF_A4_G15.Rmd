@@ -1,21 +1,96 @@
 ---
-title: "EF Group Submission Assignment 4"
-subtitle: "Group 15" 
-author: "Lanlan Hou (2801069), Rick van der Ploeg (2782774), Sebastiaan van Dijen (2769505) and Alfred Sou (2796840)"
+title: "EF_A4"
 output: pdf_document
+date: "2025-11-21"
 ---
 
-# Question 1
+```{r exercise1a, echo=TRUE}
 
+library(tidyquant)
+library(dplyr)
+library(rugarch)
+library(PerformanceAnalytics)
+library(ggplot2)
+
+symbol <- "HSBC"
+start_date <- "2010-11-01"
+end_date <- "2020-11-01"
+
+HSBC_data <- tq_get(symbol, get="stock.prices", from=start_date, to=end_date)
+
+HSBC_returns <- HSBC_data %>%
+  tq_transmute(select = adjusted, mutate_fun = periodReturn, period="daily", type="arithmetic")
+
+returns_first5y <- HSBC_returns %>% filter(date < "2015-11-01")
+returns_last5y <- HSBC_returns %>% filter(date >= "2015-11-01")
+
+spec <- ugarchspec(
+  variance.model = list(model="sGARCH", garchOrder=c(1,1)),
+  mean.model = list(armaOrder = c(1,0), include.mean = TRUE),
+  distribution.model = "norm"
+)
+ret_vec <- HSBC_returns$daily.returns
+
+# Total sample
+T <- length(ret_vec)
+
+# First 5 years length
+T1 <- nrow(returns_first5y)
+
+# Rolling estimation for last 5 years
+roll <- ugarchroll(
+  spec = spec,
+  data = ret_vec,
+  forecast.length = nrow(returns_last5y),
+  refit.every = 250,           
+  refit.window = "recursive",
+  calculate.VaR = TRUE,
+  VaR.alpha = 0.01,
+  solver = "hybrid"
+)
+
+# Extract computed VaR
+VaR_df <- as.data.frame(roll@forecast$VaR)
+VaR_001 <- VaR_df[,"alpha(1%)"]
+
+# Attach to last-5-year data
+returns_last5y$VaR_001 <- VaR_001
+
+ggplot(returns_last5y, aes(x = date)) +
+  geom_line(aes(y = daily.returns, color = "Returns")) +
+  geom_line(aes(y = VaR_001, color = "VaR(0.01)")) +
+  labs(y = "Returns / VaR", x = "Date") +
+  scale_color_manual("", values = c("Returns" = "steelblue", "VaR(0.01)" = "orange")) +
+  theme_minimal()
+```
+
+```{r Exercise1b, echo=TRUE}
+
+density_df <- as.data.frame(roll@forecast$density)
+
+#colnames(density_df) should be capital letters
+
+mu <- density_df$Mu
+sigma <- density_df$Sigma
+
+ES_001 <- mu - sigma * (dnorm(qnorm(0.01)) / 0.01)
+
+returns_last5y$ES_001 <- ES_001
+
+ggplot(returns_last5y, aes(x=date)) +
+         geom_line(aes(y=daily.returns, color = "Returns")) +
+       geom_line(aes(y=VaR_001, color = "VaR(1%)")) +
+         geom_line(aes(y=ES_001, color = "ES(1%)")) +
+         scale_color_manual("", values=c("Returns"="steelblue",
+                                         "VaR(1%)" = "orange",
+                                         "ES(1%)" = "black")) +
+         labs(y="Return / VaR / ES", x="date", title = "AR(1)-GARCH(1, 1) VaR(1%) and ES(1%)")
+theme_minimal()
+```
+
+# Question 2
 ## a.
-```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
-# Load required packages
-library(openxlsx)   # Excel file handling
-library(lubridate)  # Date/time utilities
-library(quantmod)   # Financial data & modeling
-library(rugarch)    # GARCH/AR-GARCH models
-library(ggplot2)    # Data visualization
-
+```{r echo=TRUE, fig.dim=c(5,4),fig.align='center'}
 raw <- read.xlsx('student_groups_stocks.xlsx', sheet = 1)
 
 groupNumber <- 15
@@ -50,18 +125,6 @@ compute_simpleReturns <- function(input_priceSeries){
 # compute the Daily Simple Returns for the first five years
 simpleReturns_firstFiveYears <- compute_simpleReturns(adjustedPrice_firstFiveYears)
 
-# specify AR(1)-GARCH(1,1) model under normal distribution
-ar1garch11_spec_norm <- ugarchspec(variance.model = list(model = 'sGARCH',
-                                                    garchOrder = c(1, 1)),
-                        mean.model = list(armaOrder = c(1, 0),
-                        include.mean = TRUE),
-                        distribution.model = 'norm')
-
-ar1garch11_fit_norm <- ugarchfit(spec = ar1garch11_spec_norm, 
-                                 data = simpleReturns_firstFiveYears)
-
-ar1garch11_fit_norm@fit$matcoef
-
 # extract the data of last five years
 lastFiveYear <- window(HSBC, start = endDate_fiveYears, end = endDate)
 date_lastFiveYear <- index(lastFiveYear)
@@ -72,118 +135,14 @@ adjustedPrice_lastFiveYears<- as.numeric(lastFiveYear[,'HSBC.Adjusted'])
 # compute the Daily Simple Returns for the next five years
 simpleReturns_lastFiveYears <- compute_simpleReturns(adjustedPrice_lastFiveYears)
 
-# extract the estimated parameters
-mu_norm <- coef(ar1garch11_fit_norm)['mu']
-ar1_norm <- coef(ar1garch11_fit_norm)['ar1']
-omege_norm <- coef(ar1garch11_fit_norm)['omega']
-alpha1_norm <- coef(ar1garch11_fit_norm)['alpha1']
-beta1_norm <- coef(ar1garch11_fit_norm)['beta1']
-sum_alphaBeta <- alpha1_norm + beta1_norm
-
-t <- length(simpleReturns_firstFiveYears)
-returns_t <- simpleReturns_firstFiveYears[t]
-eps_t <- ar1garch11_fit_norm@fit$residuals[t]
-var_t <- ar1garch11_fit_norm@fit$var[t]
-
-# compute the 1-step ahead variance
-oneAhead_var <- omege_norm + alpha1_norm * (eps_t^2) + beta1_norm * (var_t)
-
-forecast_returns <- numeric(length(simpleReturns_lastFiveYears))
-forecast_variance <- numeric(length(simpleReturns_lastFiveYears))
-
-# compute the returns and variance forecast for the next 5 years
-for (i in 1:length(simpleReturns_lastFiveYears)){
-  # Forecast for Simple Returns 
-  forecast_returns[i] <- (sum(sapply(0:(i-1), function(j) ar1_norm^j)) * mu_norm) + ar1_norm^i * returns_t
-  
-  # Forecast for Variance
-  if (i == 1) {
-    forecast_variance[i] <- oneAhead_var
-  } else {
-    forecast_variance[i] <- (sum(sapply(0:(i-2), 
-                                        function(j) sum_alphaBeta^j))) * omege_norm + sum_alphaBeta^(i-1) * oneAhead_var
-  }
-}
-
 probability <- 0.01
-valueAtRisk <- numeric(length(simpleReturns_lastFiveYears))
-
-# compute the forecast of VaR and ES for the last five years
-for (i in 1:length(simpleReturns_lastFiveYears)){
-  valueAtRisk[i] <- -sqrt(forecast_variance[i]) * qnorm(probability) - forecast_returns[i]
-}
-
-returns_df <- data.frame(date = date_lastFiveYear[2:1259],
-                         VaR = -valueAtRisk,
-                         simpleReturns_realized = simpleReturns_lastFiveYears)
-
-ggplot(returns_df, aes(x = date)) +
-  geom_line(aes(y = simpleReturns_realized, color = 'Realized Returns'),
-            linewidth = 1) +
-  geom_line(aes(y = VaR, color = 'VaR(0.01)'),
-            linewidth = 1, linetype = 'dashed') +
-  labs(title = 'Realized vs VaR for HSBC Daily Simple Returns (2015M11-2020M11)',
-    x = 'Date', y = 'Simple Returns', color = 'Series') +
-  scale_color_manual(values = c('Realized Returns' = 'blue',
-                                'VaR(0.01)' = 'red')) +
-  theme_minimal() +
-  theme(legend.position = c(0.9, 0.9),
-        legend.background = element_rect(fill = 'white', color = 'grey'),
-        legend.title = element_text(size = 12, face = 'bold'),
-        legend.text  = element_text(size = 10))
-ggsave('figures/a_simpleReturns_plot.png', width = 10, height = 6, dpi = 300)
-
-```
-
-## b.
-```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
-expectedShortfall <- numeric(length(simpleReturns_lastFiveYears))
-valueAtRisk <- numeric(length(simpleReturns_lastFiveYears))
-
-# compute the forecast of VaR and ES for the last five years
-for (i in 1:length(simpleReturns_lastFiveYears)){
-  expectedShortfall[i] <- sqrt(forecast_variance[i]) * (dnorm(qnorm(probability)) / probability) - forecast_returns[i]
-  
-  valueAtRisk[i] <- -sqrt(forecast_variance[i]) * qnorm(probability) - forecast_returns[i]
-}
-
-risk_df <- data.frame(date = date_lastFiveYear[2:1259],
-                      ES = -expectedShortfall,
-                      VaR = -valueAtRisk,
-                      simpleReturns_realized = simpleReturns_lastFiveYears)
-
-ggplot(risk_df, aes(x = date)) +
-  geom_hline(yintercept = 0, color = 'black', 
-             linewidth = 1, linetype = 'dashed') +
-  geom_line(aes(y = simpleReturns_realized, color = 'Realized Returns'),
-            linewidth = 1) +
-  geom_line(aes(y = ES, color = 'ES(0.01)'),
-            linewidth = 1, linetype = 'dotted') +
-  geom_line(aes(y = VaR, color = 'VaR(0.01)'),
-            linewidth = 1, linetype = 'dashed') +
-  labs(title = 'Realized vs VaR(0.01) vs ES(0.01) for HSBC Daily Simple Returns (2015M11-2020M11)',
-    x = 'Date', y = 'Simple Returns', color = 'Series') +
-  scale_color_manual(values = c('Realized Returns' = 'blue',
-                                'ES(0.01)' = 'red',
-                                'VaR(0.01)' = 'red')) +
-  theme_minimal() +
-  theme(legend.position = c(0.9, 0.9),
-        legend.background = element_rect(fill = 'white', color = 'grey'),
-        legend.title = element_text(size = 12, face = 'bold'),
-        legend.text  = element_text(size = 10))
-ggsave('figures/b_risk_plot.png', width = 10, height = 6, dpi = 300)
-```
-
-# Question 2
-
-## a.
-```{r echo=TRUE, fig.dim=c(5,4),fig.align='center'}
 window <- 3/probability
 
-firstDate <- '2016-01-01'
-secondDate <- '2017-01-01'
-thirdDate <- '2018-01-01'
-fourthDate <- '2019-12-01'
+#choose the min and max date and two random ones
+firstDate <- returns_last5y$date[which.min(returns_last5y$daily.returns)]
+secondDate <- returns_last5y$date[which.max(returns_last5y$daily.returns)]
+thirdDate <- returns_last5y$date[400]
+fourthDate <- returns_last5y$date[900]
 
 valueAtRisk_NonParametric <- function(input_startDate, input_window, input_probability){
   this_endDate <- as.Date(input_startDate) %m+% days(input_window)
@@ -255,3 +214,4 @@ nonParametric_risk_df = data.frame(Date = c(firstDate,
                                                 fourth_ES))
 nonParametric_risk_df
 ```
+

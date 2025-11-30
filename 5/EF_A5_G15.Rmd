@@ -1,0 +1,353 @@
+---
+title: "EF Group Submission Assignment 5"
+subtitle: "Group 15" 
+author: "Lanlan Hou (2801069), Rick van der Ploeg (2782774), Sebastiaan van Dijen (2769505) and Alfred Sou (2796840)"
+output: pdf_document
+---
+
+# Question 1
+
+## a.
+```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
+# Load required packages
+library(openxlsx)   # Excel file handling
+library(lubridate)  # Date/time utilities
+library(quantmod)   # Financial data & modeling
+library(rugarch)    # GARCH/AR-GARCH models
+library(ggplot2)    # Data visualization
+
+raw <- read.xlsx('student_groups_stocks.xlsx', sheet = 1)
+
+groupNumber <- 15
+nameOfStock <- raw$Stock.Name[groupNumber]
+startDate <- raw$Start.Date[groupNumber]
+endDate <- raw$`End.Date.(+10y)`[groupNumber]
+
+# compute the start date of the final five years
+originalDate <- as.Date(startDate)
+endDate_fiveYears <- originalDate %m+% years(5) + 1
+
+# extract the daily stock price from source
+getSymbols(nameOfStock, src = 'yahoo', from = startDate, to = endDate)
+allDates <- as.Date(index(HSBC))
+
+endDate_fiveYears_index <- which(allDates == as.Date(endDate_fiveYears))
+
+lastFiveYears <- window(HSBC, start = endDate_fiveYears, end = endDate)
+date_lastFiveYear <- index(lastFiveYears)
+
+# extract the Adjusted Close for the last five years
+adjustedPrice_lastFiveYears <- as.numeric(lastFiveYears[,'HSBC.Adjusted'])
+
+compute_simpleReturns <- function(input_priceSeries){
+  result <- numeric(length(input_priceSeries) - 1)
+  
+  for(i in (2:length(input_priceSeries))){
+    result[i-1] <- (input_priceSeries[i] - input_priceSeries[i-1]) / 
+                    input_priceSeries[i-1]
+  }
+  
+  return(result)
+}
+
+# compute the Daily Simple Returns for last five years
+simpleReturns_lastFiveYears <- compute_simpleReturns(adjustedPrice_lastFiveYears)
+
+# specify AR(1)-GARCH(1,1) model under normal distribution
+ar1garch11_spec_norm <- ugarchspec(variance.model = list(model = 'sGARCH',
+                                                    garchOrder = c(1, 1)),
+                        mean.model = list(armaOrder = c(1, 0),
+                        include.mean = TRUE),
+                        distribution.model = 'norm')
+
+lengthT <- length(date_lastFiveYear)
+forecast_returns <- numeric(lengthT)
+forecast_variance <- numeric(lengthT)
+
+estimationWindow <- 1000
+reestimationDuration <- 20
+
+numberOfReestimation <- round(lengthT / reestimationDuration)
+
+omega <- numeric(numberOfReestimation)
+alpha <- numeric(numberOfReestimation)
+beta <- numeric(numberOfReestimation)
+
+# compute the returns and variance forecast for the next 5 years
+for (i in 1:numberOfReestimation){
+  # compute the start and end date for this estimation
+  this_endDate_index <- endDate_fiveYears_index + reestimationDuration*(i-1)
+  this_startDate_index <- this_endDate_index - estimationWindow
+  this_endDate <- allDates[this_endDate_index]
+  this_startDate <- allDates[this_startDate_index]
+  
+  # extract the data of this window
+  thisWindow <- window(HSBC, start = this_startDate, end = this_endDate)
+  
+  # extract the Adjusted Close for the this estimation window
+  adjustedPrice_thisWindow<- as.numeric(thisWindow[,'HSBC.Adjusted'])
+  
+  # compute the Daily Simple Returns for this estimation window
+  simpleReturns_thisWindow <- compute_simpleReturns(adjustedPrice_thisWindow)
+  
+  # Fit AR(1)–GARCH(1,1) 
+  ar1garch11_fit_norm <- ugarchfit(spec = ar1garch11_spec_norm, 
+                                   data = simpleReturns_thisWindow)
+  
+  # extract the estimated parameters
+  mu_norm <- coef(ar1garch11_fit_norm)['mu']
+  ar1_norm <- coef(ar1garch11_fit_norm)['ar1']
+  omege_norm <- coef(ar1garch11_fit_norm)['omega']
+  alpha1_norm <- coef(ar1garch11_fit_norm)['alpha1']
+  beta1_norm <- coef(ar1garch11_fit_norm)['beta1']
+  sum_alphaBeta <- alpha1_norm + beta1_norm
+  
+  omega[i] <- omege_norm
+  alpha[i] <- alpha1_norm
+  beta[i] <- beta1_norm
+
+  returns_t <- simpleReturns_thisWindow[estimationWindow]
+  eps_t <- ar1garch11_fit_norm@fit$residuals[estimationWindow]
+  var_t <- ar1garch11_fit_norm@fit$var[estimationWindow]
+  
+  # compute the 1-step ahead variance
+  oneAhead_var <- omege_norm + alpha1_norm * (eps_t^2) + beta1_norm * (var_t)
+  
+  for (j in 1:reestimationDuration){
+    this_t <- reestimationDuration*(i-1) + j
+    
+    if (this_t <= lengthT){
+      # Forecast for Simple Returns 
+      forecast_returns[this_t] <- (sum(sapply(0:(j-1), function(k) ar1_norm^k)) * mu_norm) + ar1_norm^j * returns_t
+      
+      # Forecast for Variance
+      if (j == 1) {
+        forecast_variance[this_t] <- oneAhead_var
+      } else {
+        forecast_variance[this_t] <- (sum(sapply(0:(j-2), 
+                                          function(k) sum_alphaBeta^k))) * omege_norm + sum_alphaBeta^(j-1) * oneAhead_var
+      }
+    }
+  }
+}
+
+parameter_df <- data.frame(omega = omega,
+                           alpha = alpha,
+                           beta = beta,
+                           number = seq_along(omega))
+  
+ggplot(parameter_df, aes(x = number)) +
+  geom_line(aes(y = omega, color = 'ω'),
+            linewidth = 1) +
+  geom_line(aes(y = alpha, color = '⍺'),
+            linewidth = 1) +
+  geom_line(aes(y = beta, color = 'β'),
+            linewidth = 1) +
+  labs(title = 'Parameters of GARCH(1,1) for HSBC Daily Simple Returns (2015M11-2020M11)',
+    x = 'Number of Re-Estimation', y = 'Values', color = 'Series') +
+  scale_color_manual(values = c('ω' = 'darkblue',
+                                '⍺' = 'darkred',
+                                'β' = 'darkgreen')) +
+  theme_minimal() +
+  theme(legend.position = c(0.9, 0.9),
+        legend.background = element_rect(fill = 'white', color = 'grey'),
+        legend.title = element_text(size = 12, face = 'bold'),
+        legend.text  = element_text(size = 10))
+ggsave('figures/a_parameter_tracePlot.png', width = 10, height = 6, dpi = 300)
+```
+
+## b.
+```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
+probability <- 0.05
+valueAtRisk <- numeric(length(simpleReturns_lastFiveYears))
+
+hs_window <- 1000
+
+valueAtRisk_NonParametric <- function(input_window, input_probability){
+  this_VaR <- numeric(length(simpleReturns_lastFiveYears))
+  
+  for(i in 1:lengthT){
+    this_endDate_index <- endDate_fiveYears_index + (i-1)
+    this_startDate_index <- this_endDate_index - input_window
+    this_endDate <- allDates[this_endDate_index]
+    this_startDate <- allDates[this_startDate_index]
+    
+    duration <- window(HSBC, start = this_startDate, end = this_endDate)
+  
+    # extract the Adjusted Close for the next five years
+    this_adjustedPrice <- as.numeric(duration[,'HSBC.Adjusted'])
+    
+    this_simpleReturns <- compute_simpleReturns(this_adjustedPrice)
+    sorted_this_simpleReturns <- sort(this_simpleReturns)
+    
+    this_VaR[i] <- -sorted_this_simpleReturns[input_window*input_probability]
+  }
+  return(this_VaR)
+}
+
+VaR_HS <- valueAtRisk_NonParametric(hs_window, probability)
+
+# compute the forecast of VaR for the last five years
+for (i in 1:length(simpleReturns_lastFiveYears)){
+  valueAtRisk[i] <- -sqrt(forecast_variance[i]) * qnorm(probability) - forecast_returns[i]
+}
+
+# compute the EWMA volatility
+lambda <- 0.94
+
+EWMA_volatility <- numeric(length(simpleReturns_lastFiveYears)+1)
+initialMean <- mean(simpleReturns_lastFiveYears[1:30])
+initialVariance <- var(simpleReturns_lastFiveYears[1:30])
+EWMA_volatility[1] <- sqrt((1 - lambda) * initialMean^2 + lambda * initialVariance)
+
+for (t in 2:(lengthT+1)){
+  EWMA_volatility[t] <- sqrt((1 - lambda) * (simpleReturns_lastFiveYears[t-1]^2) + lambda * EWMA_volatility[t-1]^2)
+}
+
+VaR_EWMA <- numeric(length(simpleReturns_lastFiveYears))
+
+for (i in 2:(length(simpleReturns_lastFiveYears)+1)){
+  VaR_EWMA[i] <- -EWMA_volatility[i] * qnorm(probability)
+}
+
+VaR_df <- data.frame(date = date_lastFiveYear[2:1259],
+                     VaR_ARGARCH = -valueAtRisk,
+                     VaR_HS = -VaR_HS[2:1259],
+                     VaR_EWMA = -VaR_EWMA[2:1259],
+                     simpleReturns_realized = simpleReturns_lastFiveYears)
+
+ggplot(VaR_df, aes(x = date)) +
+  geom_hline(yintercept = 0, color = 'black', 
+             linewidth = 1, linetype = 'dashed') +
+  geom_line(aes(y = simpleReturns_realized, color = 'Realized Returns'),
+            linewidth = 1) +
+  geom_line(aes(y = VaR_ARGARCH, color = 'AR(1)-GARCH(1,1)'),
+            linewidth = 1) +
+  geom_line(aes(y = VaR_EWMA, color = 'EWMA'),
+            linewidth = 1) +
+  geom_line(aes(y = VaR_HS, color = 'HS'),
+            linewidth = 1) +
+  labs(title = 'Realized vs VaR(0.05) for HSBC Daily Simple Returns (2015M11-2020M11)',
+    x = 'Date', y = 'Simple Returns', color = 'Series') +
+  scale_color_manual(values = c('Realized Returns' = 'blue',
+                                'AR(1)-GARCH(1,1)' = 'red',
+                                'EWMA' = 'orange',
+                                'HS' = 'green')) +
+  theme_minimal() +
+  theme(legend.position = c(0.9, 0.9),
+        legend.background = element_rect(fill = 'white', color = 'grey'),
+        legend.title = element_text(size = 12, face = 'bold'),
+        legend.text  = element_text(size = 10))
+ggsave('figures/b_VaR_plot.png', width = 10, height = 6, dpi = 300)
+```
+# Question 2
+
+## a.
+```{r echo=TRUE, fig.dim=c(6,4),fig.align='center'}
+computeViolationRatio <- function(input_probability, input_testWindow, input_VaR, input_realized){
+  expectedViolation <- input_probability * input_testWindow
+  eta <- numeric(input_testWindow)
+  for(i in 1:input_testWindow){
+    if(input_realized[i] <= -input_VaR[i]){
+      eta[i] <- 1
+    } else {
+      eta[i] <- 0
+    }
+  }
+  violationRatio <- sum(eta == 1) / expectedViolation
+  
+  return(list(eta=eta, violationRatio=violationRatio))
+}
+
+vr_ARGARCH <- computeViolationRatio(probability, 1258, valueAtRisk, simpleReturns_lastFiveYears)
+vr_EWMA <- computeViolationRatio(probability, 1258, VaR_EWMA[2:1259], simpleReturns_lastFiveYears)
+vr_HS <- computeViolationRatio(probability, 1258, VaR_HS[2:1259], simpleReturns_lastFiveYears)
+
+violationRatio_df = data.frame(AR_GARCH = vr_ARGARCH$violationRatio,
+                               EWMA = vr_EWMA$violationRatio,
+                               HS = vr_HS$violationRatio)
+violationRatio_df
+
+bern_test_function <- function(p, v) {
+  # Number of successes and total trials
+  num_successes <- sum(v)
+  total_trials <- length(v)
+  
+  # Null hypothesis proportion
+  p_null <- p
+  
+  # Observed proportion
+  p_observed <- num_successes / total_trials
+  
+  # Likelihood under null hypothesis
+  likelihood_null <- p_null^num_successes * (1 - p_null)^(total_trials - num_successes)
+  
+  # Likelihood under observed proportion
+  likelihood_observed <- p_observed^num_successes * (1 - p_observed)^(total_trials - num_successes)
+  
+  # Calculate the test statistic (Likelihood Ratio Test statistic)
+  test_statistic <- 2 * log(likelihood_observed / likelihood_null)
+  
+  # Compute p-value from chi-squared distribution with 1 degree of freedom
+  p_value <- 1 - pchisq(test_statistic, df = 1)
+  
+  # Return the test statistic and p-value
+  list(test_statistic = test_statistic, p_value = p_value)
+}
+
+bern_test_ARGARCH <- bern_test_function(probability, vr_ARGARCH$eta)
+bern_test_EWMA <- bern_test_function(probability, vr_EWMA$eta)
+bern_test_HS <- bern_test_function(probability, vr_HS$eta)
+
+bern_test_df = data.frame(Model = c('TestStatistic','pValue'),
+                          AR_GARCH = c(bern_test_ARGARCH$test_statistic,bern_test_ARGARCH$p_value),
+                          EWMA = c(bern_test_EWMA$test_statistic,bern_test_EWMA$p_value),
+                          HS = c(bern_test_HS$test_statistic,bern_test_HS$p_value))
+
+bern_test_df
+```
+
+## b.
+```{r echo=TRUE, fig.dim=c(6,4), fig.align='center'}
+ind_test_function <- function(violations) {
+  # Calculate transition frequencies
+  v00 <- sum(violations[-1] == 0 & violations[-length(violations)] == 0)
+  v01 <- sum(violations[-1] == 1 & violations[-length(violations)] == 0)
+  v10 <- sum(violations[-1] == 0 & violations[-length(violations)] == 1)
+  v11 <- sum(violations[-1] == 1 & violations[-length(violations)] == 1)
+  
+  # Total number of transitions
+  V <- v00 + v01 + v10 + v11
+  
+  # Calculate transition probabilities
+  p_hat <- (v01 + v11) / V
+  p01_hat <- v01 / (v00 + v01)
+  p11_hat <- v11 / (v10 + v11)
+  
+  # Calculate likelihoods under the null hypothesis of independence
+  LR <- (1 - p_hat)^(v00 + v10) * p_hat^(v01 + v11)
+  
+  # Calculate likelihoods under the observed transition probabilities
+  LU <- (1 - p01_hat)^v00 * p01_hat^v01 * (1 - p11_hat)^v10 * p11_hat^v11
+  
+  # Calculate the log likelihood ratio
+  test_statistic <- 2 * log(LU / LR)
+  
+  # Compute p-value from chi-squared distribution with 1 degree of freedom
+  p_value <- 1 - pchisq(test_statistic, df = 1)
+  
+  # Return the test statistic and p-value
+  list(test_statistic = test_statistic, p_value = p_value)
+}
+
+ind_test_ARGARCH <- ind_test_function(vr_ARGARCH$eta)
+ind_test_EWMA <- ind_test_function(vr_EWMA$eta)
+ind_test_HS <- ind_test_function(vr_HS$eta)
+
+ind_test_df = data.frame(Model = c('TestStatistic','pValue'),
+                          AR_GARCH = c(ind_test_ARGARCH$test_statistic,ind_test_ARGARCH$p_value),
+                          EWMA = c(ind_test_EWMA$test_statistic,ind_test_EWMA$p_value),
+                          HS = c(ind_test_HS$test_statistic,ind_test_HS$p_value))
+
+ind_test_df
+```
