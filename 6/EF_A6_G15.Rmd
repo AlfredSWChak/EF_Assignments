@@ -1,0 +1,310 @@
+---
+title: "EF Group Submission Assignment 5"
+subtitle: "Group 15" 
+author: "Lanlan Hou (2801069), Rick van der Ploeg (2782774), Sebastiaan van Dijen (2769505) and Alfred Sou (2796840)"
+output: pdf_document
+---
+
+# Question 1
+
+## a.
+```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
+# Load required packages
+library(openxlsx)   # Excel file handling
+library(lubridate)  # Date/time utilities
+library(quantmod)   # Financial data & modeling
+library(quadprog)   # Quadratic programming
+library(tidyr)      # Data reshaping 
+library(dplyr)      # Data manipulation
+library(tidyquant)  # Tidy interface for financial data
+library(rugarch)    # GARCH/AR-GARCH models
+library(ggplot2)    # Data visualization
+
+raw <- read.xlsx('student_groups_stocks_plus3.xlsx', sheet = 1)
+
+groupNumber <- 15
+startDate <- raw$Start.Date[groupNumber]
+endDate <- raw$`End.Date.(+10y)`[groupNumber]
+stocks_list <- c('HSBA.L','DGE.L','BATS.L')
+stocks_list <- c('HSBC','DEO','BTI')
+
+originalDate <- as.Date(startDate)
+startDate_LastThreeYears <- originalDate %m+% years(7)
+
+stockPrices <- tq_get(stocks_list, 
+                      from = startDate_LastThreeYears, to = endDate, 
+                      get = "stock.prices")
+
+# Calculate daily returns
+all_returns <- stockPrices %>%
+  group_by(symbol) %>%
+  tq_transmute(select = adjusted, 
+               mutate_fun = periodReturn, 
+               period = "daily", 
+               col_rename = "returns")
+
+# Reshape dataset to wide 
+separate_returns <- all_returns %>%
+  pivot_wider(
+    names_from = symbol,  # The column that holds the new column names
+    values_from = returns     # The column that holds the values to be spread
+  )
+
+custom_colors <- c('darkred','darkgreen','darkblue')  # List of colors
+names(custom_colors) <- stocks_list       # Assign stock names to the colors
+
+# Define the plot with facet_wrap to split by 'symbol' and remove legend
+dailyReturnsPlot <- 
+  ggplot(all_returns, 
+         aes(x = date, y = returns, color = symbol, linetype = symbol)) +
+  geom_line() +  # Draw lines for each stock
+  labs(x = "Date", y = "Returns") +
+  theme_minimal() +
+  scale_color_manual(values = custom_colors) +
+  scale_linetype_manual(values = c('solid', 'solid', 'solid')) +
+  theme(legend.position = "none") +  # Remove legend
+  facet_wrap(~ symbol, ncol = 1, 
+             labeller = labeller(symbol = function(x) paste(x, "Daily Returns")))  # Customize facet labels
+
+# Export the plot
+ggsave('figures/a_returns_plot.png', plot = dailyReturnsPlot, 
+       width = 10, height = 6, dpi = 300)
+print(dailyReturnsPlot)
+
+# Prepare the portfolio weight optimization
+createResultDataFrame <- function(input_returns){
+  # Create a new data frame with the specified dates and empty weight columns
+  result_simple <- data.frame(
+    date = input_returns$date[start_index:end_index])
+  
+  # Add empty columns for each stock name dynamically
+  for (name in stocks_list) {
+    result_simple[[name]] <- NA  # Initialize with NA for each stock
+  }
+  return(result_simple)
+}
+
+simpleVolatilityApproach <- function(input_stocksList,
+                                     input_window,
+                                     input_returns,
+                                     input_gamma){
+  # Create a new data frame with the specified dates and empty weight columns
+  result_simple <- createResultDataFrame(input_returns = input_returns)
+
+  # Obtain portfolio weights using a simple mean and volatility approach
+  for (i in start_index:end_index) {
+    # Ensure data_subset is numeric
+    data_subset <- input_returns[1:(i-1), -1]
+  
+    # Obtain mean and variance-covariance
+    dvec = colMeans(data_subset, na.rm = TRUE)
+    Dmat = input_gamma * cov(data_subset, use = "pairwise.complete.obs")
+    
+    # Compute and store weights
+    outcome <- solve.QP(Dmat, dvec, Amat, bvec, meq)
+    result_simple[i-W,2:(K+1)] <- outcome$solution
+  }
+  
+  # Plot the optimal weights
+  result_expanded <- result_simple %>%
+    pivot_longer(cols = input_stocksList, 
+               names_to = "Stock", 
+               values_to = "Weight") 
+  
+  return(list(singleTable = result_expanded,
+              expandedTable = result_simple))
+}
+
+movingAverageApproach <- function(input_stocksList,
+                                  input_window,
+                                  input_returns,
+                                  input_gamma){
+  # Create a new data frame with the specified dates and empty weight columns
+  result_simple <- createResultDataFrame(input_returns = input_returns)
+
+  # Obtain portfolio weights using a simple mean and volatility approach
+  for (i in start_index:end_index) {
+    # Ensure data_subset is numeric
+    data_subset <- input_returns[(i-input_window):(i-1), -1]
+  
+    # Obtain mean and variance-covariance
+    dvec = colMeans(data_subset, na.rm = TRUE)
+    Dmat = input_gamma * cov(data_subset, use = "pairwise.complete.obs")
+    
+    # Compute and store weights
+    outcome <- solve.QP(Dmat, dvec, Amat, bvec, meq)
+    result_simple[i-W,2:(K+1)] <- outcome$solution
+  }
+  
+  # Plot the optimal weights
+  result_expanded <- result_simple %>%
+    pivot_longer(cols = input_stocksList, 
+                 names_to = "Stock", 
+                 values_to = "Weight") 
+  
+  return(list(singleTable = result_expanded,
+              expandedTable = result_simple))
+}
+
+# Estimation window length
+W=200
+
+# Extract the desired date range (from row W+1 to the end)
+start_index = W+1
+end_index <- nrow(separate_returns)
+
+# Number of assets 
+K=length(separate_returns)-1
+
+# Create Amat constraint matrix
+first_row <- matrix(1, nrow = 1, ncol = K)
+identity_matrix <- diag(K)
+Amat <- t(rbind(first_row, identity_matrix))
+
+# Create bvec vector holding the constraint values of object b to be optimized
+bvec <- c(1, rep(0, K))
+
+# meq: First how many constraints are equality constraints (sum of weights = 1)
+meq <- 1
+
+# Gamma 
+gamma = 5
+
+SV_portfolio <- simpleVolatilityApproach(input_stocksList = stocks_list,
+                             input_window = W,
+                             input_returns = separate_returns,
+                             input_gamma = gamma)
+MA_portfolio <- movingAverageApproach(input_stocksList = stocks_list,
+                             input_window = W,
+                             input_returns = separate_returns,
+                             input_gamma = gamma)
+
+simpleVolatility <- 
+  ggplot(SV_portfolio$singleTable, 
+         aes(x = date, y = Weight, color = Stock, linetype = Stock)) +
+  geom_line(,linewidth=1) +  # Draw lines for each stock
+  labs(x = "Date",
+       y = "Weight") +
+  theme_minimal() +  # Use a minimal theme
+  scale_color_manual(values = custom_colors) +
+  scale_linetype_manual(values = c('solid', 'dashed', 'dotted')) +
+  theme(legend.title = element_blank())  # Remove legend title
+#Export the plot
+ggsave('figures/a_SV_optimizationPlot.png', plot = simpleVolatility,
+       width = 10, height = 6, dpi = 300)
+print(simpleVolatility)
+
+movingAverage <- 
+  ggplot(MA_portfolio$singleTable, 
+         aes(x = date, y = Weight, color = Stock, linetype = Stock)) +
+  geom_line(,linewidth=1) +  # Draw lines for each stock
+  labs(x = "Date",
+       y = "Weight") +
+  theme_minimal() +  # Use a minimal theme
+  scale_color_manual(values = custom_colors) +
+  scale_linetype_manual(values = c('solid', 'dashed', 'dotted')) +
+  theme(legend.title = element_blank())  # Remove legend title
+#Export the plot
+ggsave('figures/a_MA_optimizationPlot.png', plot = movingAverage,
+       width = 10, height = 6, dpi = 300)
+print(movingAverage)
+```
+
+## b.
+```{r echo=TRUE,fig.dim=c(6,4),fig.align='center'}
+# Import the rf rate from csv file 
+rfrate_data <- read.csv("risk_free_rate_proxy.csv")
+rfrate_data <- na.omit(rfrate_data)
+rfrate_data$date <- as.Date(rfrate_data$date, format = "%d/%m/%Y")
+
+# Extract the rf with the last three years
+rfrate_data <- subset(rfrate_data, date >= startDate_LastThreeYears & date <= endDate)
+
+# Convert to daily returns (yield in percent per annuum) and add to df of realized returns
+rfrate_data$rfrate_daily <- ((1+rfrate_data$rfrate/100)^(1/252)-1)
+
+# Plot the rate 
+riskFreeRate_plot <- ggplot(rfrate_data, aes(x = date,y=rfrate_daily)) +
+  geom_line(color = 'blue', linetype = "solid", linewidth=.5) + 
+  labs(x = "Date",
+       y = "Daily Risk Free Rate Proxy") +
+  theme_minimal() +  # Use a minimal theme
+  theme(legend.title = element_blank())  # Remove legend title
+
+# Export the plot
+ggsave('figures/b_riskFreeRate_plot.png', plot = riskFreeRate_plot,
+       width = 10, height = 6, dpi = 300)
+print(riskFreeRate_plot)
+
+computeRealizedReturns <- function(input_stocksList,
+                                   input_returns,
+                                   input_portfolioWeighted){
+  # Align by date (inner join)
+  merged <- merge(input_portfolioWeighted, input_returns,
+                  by = 'date', suffixes = c("_w", "_r"))
+  
+  # Extract weight and return matrices in same stock order
+  W <- as.matrix(merged[ paste0(input_stocksList, "_w") ])
+  R <- as.matrix(merged[ paste0(input_stocksList, "_r") ])
+  
+  # Portfolio return at each date: sum_j w_{t,j} * r_{t,j}
+  portfolioReturns <- rowSums(W * R)
+  
+  result <- data.frame(date = merged$date,
+                       realized_returns = portfolioReturns)
+  
+  return(result)
+}
+
+# Create new dataframe with date and calculated portfolio returns
+portfolio_returns_SV <- computeRealizedReturns(
+  input_stocksList = stocks_list,
+  input_returns = separate_returns,
+  input_portfolioWeighted = SV_portfolio$expandedTable)
+
+portfolio_returns_MA <- computeRealizedReturns(
+  input_stocksList = stocks_list,
+  input_returns = separate_returns,
+  input_portfolioWeighted = MA_portfolio$expandedTable)
+
+# Plot the realized 
+realized <- ggplot(portfolio_returns_SV, 
+                   aes(x = date, y = realized_returns)) +
+  geom_line(color = 'red', linetype = "solid", linewidth=0.5) + 
+  labs(x = "Date",
+       y = "Returns") +
+  theme_minimal() +  # Use a minimal theme
+  theme(legend.title = element_blank())  # Remove legend title
+# Export the plot
+ggsave('figures/b_realized_plot.png', plot = realized,
+       width = 10, height = 6, dpi = 300)
+print(realized)
+
+computeSharpRatio <- function(input_portfolioReturns){
+  # Merge datasets
+  merged <- merge(input_portfolioReturns, 
+                  rfrate_data %>% select(date, rfrate_daily), 
+                  by="date", all.x=TRUE)
+
+  # Compute the spread between portfolio and treasury returns
+  merged$spread <- (merged$realized_returns - merged$rfrate_daily)
+
+  # Compute Sharp Ratio
+  sharpRatio = mean(merged$spread,na.rm=TRUE) / sd(merged$spread,na.rm=TRUE)
+  
+  return(sharpRatio)
+}
+
+computeSharpRatio(portfolio_returns_SV)
+
+computeSharpRatio(portfolio_returns_MA)
+```
+# Question 2
+
+## a.
+```{r echo=TRUE, fig.dim=c(6,4),fig.align='center'}
+```
+
+## b.
+```{r echo=TRUE, fig.dim=c(6,4), fig.align='center'}
+```
