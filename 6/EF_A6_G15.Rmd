@@ -107,7 +107,7 @@ meanVarianceOptimization <- function(input_approach,
     
     # Compute and store weights
     outcome <- solve.QP(Dmat, dvec, Amat, bvec, meq)
-    result_simple[i-W,2:(K+1)] <- outcome$solution
+    result_simple[(i-input_window),2:(K+1)] <- outcome$solution
   }
   
   # Plot the optimal weights
@@ -125,7 +125,7 @@ portfolioPlot <- function(input_weightsTable,
                           input_path){
   resultPlot <- ggplot(input_weightsTable, 
          aes(x = date, y = Weight, color = Stock, linetype = Stock)) +
-  geom_line(,linewidth=1) +  # Draw lines for each stock
+  geom_line(linewidth=1) +  # Draw lines for each stock
   labs(title = input_title,
        x = "Date", y = "Weight") +
   theme_minimal() +  # Use a minimal theme
@@ -234,29 +234,22 @@ computeRealizedReturns <- function(input_stocksList,
   return(result)
 }
 
-# Create new dataframe with date and calculated portfolio returns
-portfolio_returns_SV <- computeRealizedReturns(
-  input_stocksList = stocks_list,
-  input_returns = separate_returns,
-  input_portfolioWeighted = SV_portfolio$expandedTable)
-
-portfolio_returns_MA <- computeRealizedReturns(
-  input_stocksList = stocks_list,
-  input_returns = separate_returns,
-  input_portfolioWeighted = MA_portfolio$expandedTable)
-
-# Plot the realized 
-realized <- ggplot(portfolio_returns_SV, 
+realizedReturnsPlot <- function(input_portfolioReturns,
+                                input_title,
+                                input_path){
+  realized <- 
+    ggplot(input_portfolioReturns, 
                    aes(x = date, y = realized_returns)) +
-  geom_line(color = 'red', linetype = "solid", linewidth=0.5) + 
-  labs(title = 'Realized optimal portfolio returns (2017M11-2020M11)',
+    geom_line(color = 'red', linetype = "solid", linewidth=0.5) + 
+    labs(title = input_title,
        x = "Date", y = "Returns") +
-  theme_minimal() +  # Use a minimal theme
-  theme(legend.title = element_blank())  # Remove legend title
-# Export the plot
-ggsave('figures/b_realized_plot.png', plot = realized,
-       width = 10, height = 6, dpi = 300)
-print(realized)
+    theme_minimal() +  # Use a minimal theme
+    theme(legend.title = element_blank())  # Remove legend title
+    # Export the plot
+    ggsave(input_path, plot = realized,
+           width = 10, height = 6, dpi = 300)
+  return(realized)
+}
 
 computeSharpRatio <- function(input_portfolioReturns){
   # Merge datasets
@@ -273,9 +266,37 @@ computeSharpRatio <- function(input_portfolioReturns){
   return(sharpRatio)
 }
 
-computeSharpRatio(portfolio_returns_SV)
+# Create new dataframe with date and calculated portfolio returns
+portfolio_returns_SV <- computeRealizedReturns(
+  input_stocksList = stocks_list,
+  input_returns = separate_returns,
+  input_portfolioWeighted = SV_portfolio$expandedTable)
 
-computeSharpRatio(portfolio_returns_MA)
+portfolio_returns_MA <- computeRealizedReturns(
+  input_stocksList = stocks_list,
+  input_returns = separate_returns,
+  input_portfolioWeighted = MA_portfolio$expandedTable)
+
+# Plot the realized 
+realized_SV <- realizedReturnsPlot(
+  input_portfolioReturns = portfolio_returns_SV,
+  input_title = 'Realized optimal portfolio returns using Simple Volatility (2017M11-2020M11)',
+  input_path = 'figures/b_realized_SV_plot.png')
+print(realized_SV)
+
+# Plot the realized 
+realized_MA <- realizedReturnsPlot(
+  input_portfolioReturns = portfolio_returns_MA,
+  input_title = 'Realized optimal portfolio returns using Moving Average (2017M11-2020M11)',
+  input_path = 'figures/b_realized_MA_plot.png')
+print(realized_MA)
+
+SR_SV <- computeSharpRatio(portfolio_returns_SV)
+print(paste('The Sharp Ratio using Simple Volatility Approach is: ',
+            round(SR_SV,4)))
+SR_MA <- computeSharpRatio(portfolio_returns_MA)
+print(paste('The Sharp Ratio using Moving Average Approach is: ',
+            round(SR_MA,4)))
 ```
 # Question 2
 
