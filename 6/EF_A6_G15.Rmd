@@ -26,7 +26,7 @@ groupNumber <- 15
 startDate <- raw$Start.Date[groupNumber]
 endDate <- raw$`End.Date.(+10y)`[groupNumber]
 stocks_list <- c('HSBA.L','DGE.L','BATS.L')
-stocks_list <- c('HSBC','DEO','BTI')
+# stocks_list <- c('HSBC','DEO','BTI') # USD
 
 originalDate <- as.Date(startDate)
 startDate_LastThreeYears <- originalDate %m+% years(7)
@@ -58,7 +58,8 @@ dailyReturnsPlot <-
   ggplot(all_returns, 
          aes(x = date, y = returns, color = symbol, linetype = symbol)) +
   geom_line() +  # Draw lines for each stock
-  labs(x = "Date", y = "Returns") +
+  labs(title = 'Daily returns of each stock (2017M11-2020M11)',
+       x = "Date", y = "Returns") +
   theme_minimal() +
   scale_color_manual(values = custom_colors) +
   scale_linetype_manual(values = c('solid', 'solid', 'solid')) +
@@ -84,48 +85,21 @@ createResultDataFrame <- function(input_returns){
   return(result_simple)
 }
 
-simpleVolatilityApproach <- function(input_stocksList,
+meanVarianceOptimization <- function(input_approach,
+                                     input_stocksList,
                                      input_window,
                                      input_returns,
                                      input_gamma){
   # Create a new data frame with the specified dates and empty weight columns
   result_simple <- createResultDataFrame(input_returns = input_returns)
 
-  # Obtain portfolio weights using a simple mean and volatility approach
+  # Obtain portfolio weights using selected approach
   for (i in start_index:end_index) {
-    # Ensure data_subset is numeric
-    data_subset <- input_returns[1:(i-1), -1]
-  
-    # Obtain mean and variance-covariance
-    dvec = colMeans(data_subset, na.rm = TRUE)
-    Dmat = input_gamma * cov(data_subset, use = "pairwise.complete.obs")
-    
-    # Compute and store weights
-    outcome <- solve.QP(Dmat, dvec, Amat, bvec, meq)
-    result_simple[i-W,2:(K+1)] <- outcome$solution
-  }
-  
-  # Plot the optimal weights
-  result_expanded <- result_simple %>%
-    pivot_longer(cols = input_stocksList, 
-               names_to = "Stock", 
-               values_to = "Weight") 
-  
-  return(list(singleTable = result_expanded,
-              expandedTable = result_simple))
-}
-
-movingAverageApproach <- function(input_stocksList,
-                                  input_window,
-                                  input_returns,
-                                  input_gamma){
-  # Create a new data frame with the specified dates and empty weight columns
-  result_simple <- createResultDataFrame(input_returns = input_returns)
-
-  # Obtain portfolio weights using a simple mean and volatility approach
-  for (i in start_index:end_index) {
-    # Ensure data_subset is numeric
-    data_subset <- input_returns[(i-input_window):(i-1), -1]
+    if (input_approach == 'simpleVolatility'){
+      data_subset <- input_returns[1:(i-1), -1]
+    } else if (input_approach == 'movingAverage') {
+      data_subset <- input_returns[(i-input_window):(i-1), -1]
+    }
   
     # Obtain mean and variance-covariance
     dvec = colMeans(data_subset, na.rm = TRUE)
@@ -144,6 +118,25 @@ movingAverageApproach <- function(input_stocksList,
   
   return(list(singleTable = result_expanded,
               expandedTable = result_simple))
+}
+
+portfolioPlot <- function(input_weightsTable,
+                          input_title,
+                          input_path){
+  resultPlot <- ggplot(input_weightsTable, 
+         aes(x = date, y = Weight, color = Stock, linetype = Stock)) +
+  geom_line(,linewidth=1) +  # Draw lines for each stock
+  labs(title = input_title,
+       x = "Date", y = "Weight") +
+  theme_minimal() +  # Use a minimal theme
+  scale_color_manual(values = custom_colors) +
+  scale_linetype_manual(values = c('solid', 'dashed', 'dotted')) +
+  theme(legend.title = element_blank())  # Remove legend title
+  #Export the plot
+  ggsave(input_path, plot = resultPlot,
+         width = 10, height = 6, dpi = 300)
+  
+  return(resultPlot)
 }
 
 # Estimation window length
@@ -168,45 +161,31 @@ bvec <- c(1, rep(0, K))
 meq <- 1
 
 # Gamma 
-gamma = 5
+gamma = 2
 
-SV_portfolio <- simpleVolatilityApproach(input_stocksList = stocks_list,
-                             input_window = W,
-                             input_returns = separate_returns,
-                             input_gamma = gamma)
-MA_portfolio <- movingAverageApproach(input_stocksList = stocks_list,
-                             input_window = W,
-                             input_returns = separate_returns,
-                             input_gamma = gamma)
+SV_portfolio <- meanVarianceOptimization(
+  input_approach = 'simpleVolatility',
+  input_stocksList = stocks_list,
+  input_window = W,
+  input_returns = separate_returns,
+  input_gamma = gamma)
+MA_portfolio <- meanVarianceOptimization(
+  input_approach = 'movingAverage',
+  input_stocksList = stocks_list,
+  input_window = W,
+  input_returns = separate_returns,
+  input_gamma = gamma)
 
-simpleVolatility <- 
-  ggplot(SV_portfolio$singleTable, 
-         aes(x = date, y = Weight, color = Stock, linetype = Stock)) +
-  geom_line(,linewidth=1) +  # Draw lines for each stock
-  labs(x = "Date",
-       y = "Weight") +
-  theme_minimal() +  # Use a minimal theme
-  scale_color_manual(values = custom_colors) +
-  scale_linetype_manual(values = c('solid', 'dashed', 'dotted')) +
-  theme(legend.title = element_blank())  # Remove legend title
-#Export the plot
-ggsave('figures/a_SV_optimizationPlot.png', plot = simpleVolatility,
-       width = 10, height = 6, dpi = 300)
+simpleVolatility <- portfolioPlot(
+  input_weightsTable = SV_portfolio$singleTable,
+  input_title = 'Optimal portfolio weights using Simple Volatility Approach',
+  input_path = 'figures/a_SV_optimizationPlot.png')
 print(simpleVolatility)
 
-movingAverage <- 
-  ggplot(MA_portfolio$singleTable, 
-         aes(x = date, y = Weight, color = Stock, linetype = Stock)) +
-  geom_line(,linewidth=1) +  # Draw lines for each stock
-  labs(x = "Date",
-       y = "Weight") +
-  theme_minimal() +  # Use a minimal theme
-  scale_color_manual(values = custom_colors) +
-  scale_linetype_manual(values = c('solid', 'dashed', 'dotted')) +
-  theme(legend.title = element_blank())  # Remove legend title
-#Export the plot
-ggsave('figures/a_MA_optimizationPlot.png', plot = movingAverage,
-       width = 10, height = 6, dpi = 300)
+movingAverage <- portfolioPlot(
+  input_weightsTable = MA_portfolio$singleTable,
+  input_title = 'Optimal portfolio weights using Moving Average Approach',
+  input_path = 'figures/a_MA_optimizationPlot.png')
 print(movingAverage)
 ```
 
@@ -226,11 +205,10 @@ rfrate_data$rfrate_daily <- ((1+rfrate_data$rfrate/100)^(1/252)-1)
 # Plot the rate 
 riskFreeRate_plot <- ggplot(rfrate_data, aes(x = date,y=rfrate_daily)) +
   geom_line(color = 'blue', linetype = "solid", linewidth=.5) + 
-  labs(x = "Date",
-       y = "Daily Risk Free Rate Proxy") +
+  labs(title = 'Risk free rate proxy (2017M11-2020M11)',
+       x = "Date", y = "Daily Risk Free Rate Proxy") +
   theme_minimal() +  # Use a minimal theme
   theme(legend.title = element_blank())  # Remove legend title
-
 # Export the plot
 ggsave('figures/b_riskFreeRate_plot.png', plot = riskFreeRate_plot,
        width = 10, height = 6, dpi = 300)
@@ -271,8 +249,8 @@ portfolio_returns_MA <- computeRealizedReturns(
 realized <- ggplot(portfolio_returns_SV, 
                    aes(x = date, y = realized_returns)) +
   geom_line(color = 'red', linetype = "solid", linewidth=0.5) + 
-  labs(x = "Date",
-       y = "Returns") +
+  labs(title = 'Realized optimal portfolio returns (2017M11-2020M11)',
+       x = "Date", y = "Returns") +
   theme_minimal() +  # Use a minimal theme
   theme(legend.title = element_blank())  # Remove legend title
 # Export the plot
