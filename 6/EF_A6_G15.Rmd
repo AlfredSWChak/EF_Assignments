@@ -18,6 +18,7 @@ library(tidyr)      # Data reshaping
 library(dplyr)      # Data manipulation
 library(tidyquant)  # Tidy interface for financial data
 library(rugarch)    # GARCH/AR-GARCH models
+library(nloptr)     # Nonlinear optimization
 library(ggplot2)    # Data visualization
 
 raw <- read.xlsx('student_groups_stocks_plus3.xlsx', sheet = 1)
@@ -57,6 +58,8 @@ names(custom_colors) <- stocks_list       # Assign stock names to the colors
 dailyReturnsPlot <- 
   ggplot(all_returns, 
          aes(x = date, y = returns, color = symbol, linetype = symbol)) +
+  geom_hline(yintercept = 0, color = 'black', 
+             linewidth = 0.5, linetype = 'dashed') +
   geom_line() +  # Draw lines for each stock
   labs(title = 'Daily returns of each stock (2017M11-2020M11)',
        x = "Date", y = "Returns") +
@@ -204,6 +207,8 @@ rfrate_data$rfrate_daily <- ((1+rfrate_data$rfrate/100)^(1/252)-1)
 
 # Plot the rate 
 riskFreeRate_plot <- ggplot(rfrate_data, aes(x = date,y=rfrate_daily)) +
+  geom_hline(yintercept = 0, color = 'black', 
+             linewidth = 0.5, linetype = 'dashed') +
   geom_line(color = 'blue', linetype = "solid", linewidth=.5) + 
   labs(title = 'Risk free rate proxy (2017M11-2020M11)',
        x = "Date", y = "Daily Risk Free Rate Proxy") +
@@ -240,6 +245,8 @@ realizedReturnsPlot <- function(input_portfolioReturns,
   realized <- 
     ggplot(input_portfolioReturns, 
                    aes(x = date, y = realized_returns)) +
+    geom_hline(yintercept = 0, color = 'black', 
+             linewidth = 0.5, linetype = 'dashed') +
     geom_line(color = 'red', linetype = "solid", linewidth=0.5) + 
     labs(title = input_title,
        x = "Date", y = "Returns") +
@@ -293,17 +300,178 @@ print(realized_MA)
 
 SR_SV <- computeSharpRatio(portfolio_returns_SV)
 print(paste('The Sharp Ratio using Simple Volatility Approach is: ',
-            round(SR_SV,4)))
+            round(SR_SV,5)))
 SR_MA <- computeSharpRatio(portfolio_returns_MA)
 print(paste('The Sharp Ratio using Moving Average Approach is: ',
-            round(SR_MA,4)))
+            round(SR_MA,5)))
 ```
 # Question 2
 
 ## a.
 ```{r echo=TRUE, fig.dim=c(6,4),fig.align='center'}
+valueAtRisk_Parametric <- function(input_portfolioWeights,
+                                   input_assetsMean,
+                                   input_covarianceMatrix,
+                                   input_p) {
+  portfolioMean <- sum(input_portfolioWeights * input_assetsMean)
+  portfolioSTDEV <- sqrt(as.numeric(t(input_portfolioWeights) %*% input_covarianceMatrix %*% input_portfolioWeights))
+  VaR_returns <- -portfolioSTDEV*qnorm(input_p) - portfolioMean
+  return(VaR_returns)
+}
+
+VaRMinimization <- function(input_dvec, input_Dmat) {
+  K <- length(input_dvec)
+  
+  # Objective: minimize VaR(0.05)
+  eval_f <- function(porfolioWeights) {
+    valueAtRisk_Parametric(input_portfolioWeights = porfolioWeights,
+                           input_assetsMean = input_dvec,
+                           input_covarianceMatrix = input_Dmat,
+                           input_p = 0.05)
+  }
+  
+  # Equality constraint: sum(w) = 1
+  eval_g_eq <- function(porfolioWeights) {
+    sum(porfolioWeights) - 1
+  }
+  
+  # No short-selling
+  lowerBound <- rep(0, K)
+  upperBound <- rep(1, K)
+  
+  result <- nloptr(
+    x0 = rep(1/K, K),         # start from equal weights
+    eval_f = eval_f, eval_g_eq = eval_g_eq,
+    lb = lowerBound, ub = upperBound,
+    opts = list(algorithm = "NLOPT_LN_COBYLA",
+                maxeval = 1000, xtol_rel = 1e-6))
+  
+  return(as.numeric(result$solution))
+}
+
+VaROptimization <- function(input_approach,
+                            input_stocksList,
+                            input_window,
+                            input_returns,
+                            input_gamma) {
+  # Create a new data frame with the specified dates and empty weight columns
+  result_simple <- createResultDataFrame(input_returns = input_returns)
+  VaR_list <- numeric(length(input_returns))
+  
+  for (i in start_index:end_index) {
+    if (input_approach == 'simpleVolatility'){
+      data_subset <- input_returns[1:(i-1), -1]
+    } else if (input_approach == 'movingAverage') {
+      data_subset <- input_returns[(i-input_window):(i-1), -1]
+    }
+    
+    # Obtain mean and variance-covariance
+    dvec <- colMeans(data_subset, na.rm = TRUE)
+    Dmat <- input_gamma * cov(data_subset, use = "pairwise.complete.obs")
+    
+    # Compute and store weights
+    outcome <- VaRMinimization(dvec, Dmat)
+    VaR_list[i-input_window] <- valueAtRisk_Parametric(
+      input_portfolioWeights = outcome, 
+      input_assetsMean = dvec, 
+      input_covarianceMatrix = Dmat,
+      input_p = 0.05)
+    result_simple[(i-input_window), 2:(length(input_stocksList)+1)] <- outcome
+  }
+  
+  # Plot the optimal weights
+  result_expanded <- result_simple %>%
+    pivot_longer(cols = input_stocksList, 
+                 names_to = "Stock", 
+                 values_to = "Weight") 
+  
+  return(list(singleTable = result_expanded,
+              expandedTable = result_simple,
+              VaR = VaR_list))
+}
+
+VaR_portfolio_SV <- VaROptimization(input_approach = 'simpleVolatility',
+                                 input_stocksList = stocks_list,
+                                 input_window = W,             
+                                 input_returns = separate_returns,
+                                 input_gamma = gamma)
+
+VaR_portfolio_MA <- VaROptimization(input_approach = 'movingAverage',
+                                 input_stocksList = stocks_list,
+                                 input_window = W,             
+                                 input_returns = separate_returns,
+                                 input_gamma = gamma)
+
+VaR_weights_plot_SV <- portfolioPlot(
+  input_weightsTable = VaR_portfolio_SV$singleTable,
+  input_title = 'Optimal portfolio weights by VaR Optimization using Simple Volatility',
+  input_path  = 'figures/2a_VaR_optimization_SV_plot.png'
+)
+
+VaR_weights_plot_MA <- portfolioPlot(
+  input_weightsTable = VaR_portfolio_MA$singleTable,
+  input_title = 'Optimal portfolio weights by VaR Optimization using Moving Average',
+  input_path  = 'figures/2a_VaR_optimization_MA_plot.png'
+)
+
+print(VaR_weights_plot_SV)
+print(VaR_weights_plot_MA)
 ```
 
 ## b.
 ```{r echo=TRUE, fig.dim=c(6,4), fig.align='center'}
+computeViolationRatio <- function(input_probability, 
+                                  input_testWindow, 
+                                  input_VaR, input_realized){
+  expectedViolation <- input_probability * input_testWindow
+  eta <- numeric(input_testWindow)
+  for(i in 1:input_testWindow){
+    if(input_realized[i] <= -input_VaR[i]){
+      eta[i] <- 1
+    } else {
+      eta[i] <- 0
+    }
+  }
+  violationRatio <- sum(eta == 1) / expectedViolation
+  
+  return(list(eta=eta, violationRatio=violationRatio))
+}
+
+portfolio_returns_VaR_SV <- computeRealizedReturns(
+  input_stocksList      = stocks_list,
+  input_returns         = separate_returns,
+  input_portfolioWeighted = VaR_portfolio_SV$expandedTable
+)
+
+portfolio_returns_VaR_MA <- computeRealizedReturns(
+  input_stocksList      = stocks_list,
+  input_returns         = separate_returns,
+  input_portfolioWeighted = VaR_portfolio_MA$expandedTable
+)
+
+vr_VaROptimization_SV <- computeViolationRatio(
+  input_probability = 0.05,
+  input_testWindow = length(portfolio_returns_VaR_SV$date), 
+  input_VaR = VaR_portfolio_SV$VaR,
+  input_realized = portfolio_returns_VaR_SV$realized_returns)
+
+vr_VaROptimization_MA <- computeViolationRatio(
+  input_probability = 0.05,
+  input_testWindow = length(portfolio_returns_VaR_MA$date), 
+  input_VaR = VaR_portfolio_MA$VaR,
+  input_realized = portfolio_returns_VaR_MA$realized_returns)
+
+vr_VaROptimization_SV$violationRatio
+print(paste('The Violation Ratio using Simple Volatility Approach is: ',
+            round(vr_VaROptimization_SV$violationRatio,5)))
+vr_VaROptimization_MA$violationRatio
+print(paste('The Violation Ratio using Moving Averge Approach is: ',
+            round(vr_VaROptimization_MA$violationRatio,5)))
+
+SR_VaR_SV <- computeSharpRatio(portfolio_returns_VaR_SV)
+print(paste('The Sharp Ratio using Simple Volatility Approach is: ',
+            round(SR_VaR_SV,5)))
+SR_VaR_MA <- computeSharpRatio(portfolio_returns_VaR_MA)
+print(paste('The Sharp Ratio using Moving Average Approach is: ',
+            round(SR_VaR_MA,5)))
 ```
